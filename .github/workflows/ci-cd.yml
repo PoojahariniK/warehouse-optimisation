@@ -1,5 +1,10 @@
 name: CAP-12 CI/CD Pipeline
 
+# Required permissions for pushing images to GHCR
+permissions:
+  contents: read
+  packages: write
+
 on:
   push:
     branches: [ main, master ]
@@ -64,7 +69,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker Compose Services
+      - name: Build Docker Compose Services (lint only)
         run: |
           docker compose build
 
@@ -76,24 +81,31 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      # The build‑push action automatically authenticates with GITHUB_TOKEN
+
+      - name: Build & push Python optimisation engine image
+        uses: docker/build-push-action@v5
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./python
+          file: ./python/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/smart-warehouse-python:latest
 
-      - name: Build and Push Images
-        run: |
-          # Tag images with GHCR namespace
-          docker compose build
-          docker tag smart-warehouse-python:local ghcr.io/${{ github.repository_owner }}/smart-warehouse-python:latest
-          docker tag $(docker compose config | grep '^  backend:' -A1 | grep 'image:' | awk '{print $2}') ghcr.io/${{ github.repository_owner }}/smart-warehouse-backend:latest
-          docker tag $(docker compose config | grep '^  frontend:' -A1 | grep 'image:' | awk '{print $2}') ghcr.io/${{ github.repository_owner }}/smart-warehouse-frontend:latest
+      - name: Build & push Backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/smart-warehouse-backend:latest
 
-          docker push ghcr.io/${{ github.repository_owner }}/smart-warehouse-python:latest
-          docker push ghcr.io/${{ github.repository_owner }}/smart-warehouse-backend:latest
-          docker push ghcr.io/${{ github.repository_owner }}/smart-warehouse-frontend:latest
+      - name: Build & push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/smart-warehouse-frontend:latest
 
   deploy:
     name: Deploy to EC2
@@ -114,7 +126,7 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Sync project to EC2
+      - name: Sync project to EC2 (excluding .env)
         run: |
           rsync -avz --exclude='.git' --exclude='node_modules' . ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/smart-warehouse-optimizer/
 
@@ -127,17 +139,13 @@ jobs:
           SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
           SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
           SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
-
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SPRING_PROFILES_ACTIVE: ${{ secrets.SPRING_PROFILES_ACTIVE }}
-
           REACT_APP_API_BASE_URL: http://${{ secrets.EC2_HOST }}:8080/api
-
           DISPATCH_POINT_X: ${{ secrets.DISPATCH_POINT_X }}
           DISPATCH_POINT_Y: ${{ secrets.DISPATCH_POINT_Y }}
           WALKING_SPEED: ${{ secrets.WALKING_SPEED }}
           PICK_HANDLING_TIME: ${{ secrets.PICK_HANDLING_TIME }}
-
           AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
           SNOWFLAKE_STAGE: ${{ secrets.SNOWFLAKE_STAGE }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
