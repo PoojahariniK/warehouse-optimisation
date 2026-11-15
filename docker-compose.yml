@@ -2,6 +2,9 @@ version: '3.8'
 
 services:
   engine:
+    build:
+      context: .
+      dockerfile: python/Dockerfile
     image: smart-warehouse-python:local
     container_name: wh-py
     environment:
