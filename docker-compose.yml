@@ -48,7 +48,7 @@ services:
     image: ghcr.io/poojaharinik/smart-warehouse-frontend:latest
     container_name: cap12-warehouse-frontend
     ports:
-      - "3000:3000"
+      - "3000:80"
     environment:
       - PORT=3000
       - BACKEND_HOST=backend
