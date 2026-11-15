@@ -1,0 +1,14 @@
+.git
+.github
+venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+notebooks/.ipynb_checkpoints/
+backend/target/
+frontend/node_modules/
+*.log
+.DS_Store
+Thumbs.db
+

@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  engine:
+    image: smart-warehouse-python:local
+    container_name: wh-py
+    environment:
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT:-}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER:-}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD:-}
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cap12-warehouse-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE:-default}
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT:-}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER:-}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD:-}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE:-CAP12_WH}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE:-CAP12_WAREHOUSE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA:-CLEAN}
+      - PORT=8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      engine:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cap12-warehouse-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - BACKEND_HOST=backend
+      - BACKEND_PORT=8080
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+networks:
+  default:
+    name: cap12-warehouse-network

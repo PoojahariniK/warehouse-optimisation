@@ -1,0 +1,31 @@
+SKU_ID,Product_Name,Category,Required_Capacity,Current_Location
+SKU001,Laptop,Computing,9,A01
+SKU002,Tablet,Computing,18,A02
+SKU003,Smartphone,Electronics,16,A03
+SKU004,Monitor,Electronics,13,A04
+SKU005,Webcam,Electronics,13,A05
+SKU006,USB Hub,Accessories,19,A06
+SKU007,Wireless Mouse,Accessories,9,A07
+SKU008,Keyboard,Accessories,17,A08
+SKU009,Laptop Stand,Accessories,10,B01
+SKU010,Mouse Pad,Accessories,9,B02
+SKU011,Power Bank,Battery,14,B03
+SKU012,AA Battery Pack,Battery,20,B04
+SKU013,Rechargeable Battery,Battery,17,B05
+SKU014,Bluetooth Speaker,Audio,17,B06
+SKU015,Headphones,Audio,17,B07
+SKU016,Earbuds,Audio,18,B08
+SKU017,Microphone,Audio,14,C01
+SKU018,HDMI Cable,Accessories,9,C02
+SKU019,USB-C Cable,Accessories,18,C03
+SKU020,Ethernet Cable,Accessories,13,C04
+SKU021,External SSD,Computing,14,C05
+SKU022,Flash Drive,Computing,12,C06
+SKU023,Router,Electronics,10,C07
+SKU024,Wi-Fi Adapter,Electronics,20,C08
+SKU025,Laptop Charger,Electronics,18,D01
+SKU026,Phone Charger,Electronics,16,D02
+SKU027,Smartwatch,Electronics,13,D03
+SKU028,Graphics Tablet,Computing,18,D04
+SKU029,Docking Station,Computing,15,D05
+SKU030,Portable SSD,Computing,13,D06

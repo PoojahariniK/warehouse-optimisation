@@ -1,0 +1,31 @@
+Recommendation_ID,SKU_ID,Product_Name,Demand_Class,Current_Location,Recommended_Location,Distance,Distance_Saved,Recommendation_Status,Reason
+REC001,SKU007,Wireless Mouse,Medium,A02,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A02' (dispatch distance 5.0) is already closer to dispatch than any remaining empty bin
+REC002,SKU008,Keyboard,Medium,B02,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B02' (dispatch distance 15.0) is already closer to dispatch than any remaining empty bin
+REC003,SKU004,Monitor,Medium,A04,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A04' (dispatch distance 15.0) is already closer to dispatch than any remaining empty bin
+REC004,SKU006,USB Hub,Medium,A06,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A06' (dispatch distance 25.0) is already closer to dispatch than any remaining empty bin
+REC005,SKU010,Mouse Pad,Medium,B02,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B02' (dispatch distance 15.0) is already closer to dispatch than any remaining empty bin
+REC006,SKU003,Smartphone,Medium,A03,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A03' (dispatch distance 10.0) is already closer to dispatch than any remaining empty bin
+REC007,SKU009,Laptop Stand,Medium,B01,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B01' (dispatch distance 10.0) is already closer to dispatch than any remaining empty bin
+REC008,SKU001,Laptop,Medium,A01,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A01' (dispatch distance 0.0) is already closer to dispatch than any remaining empty bin
+REC009,SKU002,Tablet,Medium,A02,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A02' (dispatch distance 5.0) is already closer to dispatch than any remaining empty bin
+REC010,SKU015,Headphones,Medium,A06,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A06' (dispatch distance 25.0) is already closer to dispatch than any remaining empty bin
+REC011,SKU005,Webcam,Slow,A05,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A05' (dispatch distance 20.0) is already closer to dispatch than any remaining empty bin
+REC012,SKU013,Rechargeable Battery,Slow,B05,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B05' (dispatch distance 30.0) is already closer to dispatch than any remaining empty bin
+REC013,SKU016,Earbuds,Slow,C04,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'C04' (dispatch distance 35.0) is already closer to dispatch than any remaining empty bin
+REC014,SKU017,Microphone,Slow,C01,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'C01' (dispatch distance 20.0) is already closer to dispatch than any remaining empty bin
+REC015,SKU023,Router,Slow,B06,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B06' (dispatch distance 35.0) is already closer to dispatch than any remaining empty bin
+REC016,SKU024,Wi-Fi Adapter,Slow,A08,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A08' (dispatch distance 35.0) is already closer to dispatch than any remaining empty bin
+REC017,SKU019,USB-C Cable,Slow,C03,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'C03' (dispatch distance 30.0) is already closer to dispatch than any remaining empty bin
+REC018,SKU021,External SSD,Slow,C05,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'C05' (dispatch distance 40.0) is already closer to dispatch than any remaining empty bin
+REC019,SKU014,Bluetooth Speaker,Slow,A07,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'A07' (dispatch distance 30.0) is already closer to dispatch than any remaining empty bin
+REC020,SKU030,Portable SSD,Slow,B08,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B08' (dispatch distance 45.0) is already closer to dispatch than any remaining empty bin
+REC021,SKU018,HDMI Cable,Slow,C02,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'C02' (dispatch distance 25.0) is already closer to dispatch than any remaining empty bin
+REC022,SKU020,Ethernet Cable,Slow,C04,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'C04' (dispatch distance 35.0) is already closer to dispatch than any remaining empty bin
+REC023,SKU022,Flash Drive,Slow,B06,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B06' (dispatch distance 35.0) is already closer to dispatch than any remaining empty bin
+REC024,SKU027,Smartwatch,Slow,D03,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'D03' (dispatch distance 40.0) is already closer to dispatch than any remaining empty bin
+REC025,SKU028,Graphics Tablet,Slow,D04,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'D04' (dispatch distance 45.0) is already closer to dispatch than any remaining empty bin
+REC026,SKU029,Docking Station,Slow,B07,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B07' (dispatch distance 40.0) is already closer to dispatch than any remaining empty bin
+REC027,SKU012,AA Battery Pack,Slow,B04,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B04' (dispatch distance 25.0) is already closer to dispatch than any remaining empty bin
+REC028,SKU011,Power Bank,Slow,B03,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'B03' (dispatch distance 20.0) is already closer to dispatch than any remaining empty bin
+REC029,SKU025,Laptop Charger,Slow,D01,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'D01' (dispatch distance 30.0) is already closer to dispatch than any remaining empty bin
+REC030,SKU026,Phone Charger,Slow,D02,NONE,0.0,0.0,NO_FEASIBLE_LOCATION,Current location 'D02' (dispatch distance 35.0) is already closer to dispatch than any remaining empty bin

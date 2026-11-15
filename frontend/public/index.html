@@ -1,0 +1,2305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CAP-12 Warehouse Slotting & Pick-Path Optimization</title>
+  <link rel="stylesheet" href="../src/App.css" />
+  <link rel="stylesheet" href="App.css" />
+  <!-- React 18, ReactDOM 18, Babel Standalone & Axios -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/axios@1.7.0/dist/axios.min.js"></script>
+  <!-- Seed Data for Zero-Configuration Offline Preview -->
+  <script src="seed_data.js"></script>
+  <style>
+    /* In case App.css path differs when loaded directly */
+    :root {
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-card: #1e293b;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent-blue: #38bdf8;
+      --border-color: #334155;
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="padding: 3rem; text-align: center; color: #94a3b8; font-family: sans-serif;">
+      <div style="border: 3px solid rgba(255, 255, 255, 0.1); border-top: 3px solid #38bdf8; border-radius: 50%; width: 32px; height: 32px; animation: spin 0.8s linear infinite; margin: 0 auto 1rem;"></div>
+      <h2>Initializing CAP-12 Warehouse Optimization Dashboard...</h2>
+      <p style="margin-top: 0.5rem; font-size: 0.9rem;">Connecting to Warehouse Management Engine...</p>
+    </div>
+  </div>
+
+  <!-- Standalone Bundled Script for Seamless Browser Execution -->
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo } = React;
+
+    // --- API CLIENT ---
+    const API_BASE_URL = 'http://localhost:8080/api';
+
+    async function apiRequest(path, options = {}) {
+      const url = `${API_BASE_URL}${path}`;
+      if (window.axios) {
+        try {
+          const resp = await window.axios({
+            url,
+            method: options.method || 'GET',
+            data: options.body ? JSON.parse(options.body) : undefined,
+            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+          });
+          return resp.data;
+        } catch (err) {
+          if (err.response && err.response.data) {
+            throw new Error(err.response.data.message || err.response.statusText);
+          }
+          throw err;
+        }
+      }
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(errorBody.message || `HTTP ${response.status}`);
+      }
+      return response.json();
+    }
+
+    const warehouseApi = {
+      getProducts: () => apiRequest('/products'),
+      getLocations: () => apiRequest('/locations'),
+      vacateLocation: (locationId) => apiRequest(`/locations/${locationId}/vacate`, { method: 'POST' }),
+      getDemand: () => apiRequest('/demand'),
+      getSlotRecommendations: () => apiRequest('/slots/recommendations'),
+      approveSlot: (id) => apiRequest(`/slots/approve/${id}`, { method: 'POST' }),
+      rejectSlot: (id) => apiRequest(`/slots/reject/${id}`, { method: 'POST' }),
+      reEvaluateSlots: () => apiRequest('/slots/re-evaluate', { method: 'POST' }),
+      getAllRoutes: () => apiRequest('/routes'),
+      getReplenishmentAlerts: () => apiRequest('/replenishment'),
+      getAnalytics: () => apiRequest('/analytics'),
+      getAffinity: () => apiRequest('/affinity'),
+      resetDemoState: () => apiRequest('/admin/reset', { method: 'POST' }),
+    };
+
+    // --- HEADER COMPONENT ---
+    function Header() {
+      return (
+        <header className="header">
+          <div className="header-title-group">
+            <h1>
+              <span>📦 CAP-12 Warehouse Optimization</span>
+            </h1>
+            <p className="header-subtitle">
+              Intelligent Warehouse Slotting, Demand Profiling & Pick-Path Routing Dashboard
+            </p>
+          </div>
+        </header>
+      );
+    }
+
+    // --- NAVBAR COMPONENT ---
+    function Navbar({ activeTab, setActiveTab, counts }) {
+      const tabs = [
+        { id: 'overview', label: '1. Overview & KPIs' },
+        { id: 'products', label: '2. Product Master', count: counts.products },
+        { id: 'locations', label: '3. Warehouse Grid', count: counts.locations },
+        { id: 'demand', label: '4. Demand Profile', count: counts.demand },
+        { id: 'recommendations', label: '5. Slotting Engine', count: counts.recommendations },
+        { id: 'pickpath', label: '6. Pick-Path Routing', count: counts.routes },
+        { id: 'replenishment', label: '7. Replenishment', count: counts.replenishment, alert: counts.replenishment > 0 },
+        { id: 'approval', label: '8. Supervisor Approval', count: counts.pendingApproval, success: true },
+      ];
+
+      return (
+        <nav className="nav-tabs">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              className={`nav-tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+              {tab.count !== undefined && (
+                <span className={`tab-badge ${tab.alert ? 'alert' : tab.success ? 'success' : ''}`}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+      );
+    }
+
+    // --- 1. OVERVIEW & PERFORMANCE KPIS COMPONENT ---
+    function WarehouseOverview({ analytics, routes, recommendations, replenishment }) {
+      if (!analytics) return <div className="state-container"><div className="spinner"></div>Loading overview & performance analytics...</div>;
+
+      const improvedRoutes = routes ? routes.filter(r => r.routeStatus === 'IMPROVED').length : 0;
+      const worseRoutes = routes ? routes.filter(r => r.routeStatus === 'WORSE').length : 0;
+      const identicalRoutes = routes ? routes.filter(r => r.routeStatus === 'IDENTICAL').length : 0;
+      const totalRoutes = routes ? routes.length : 0;
+
+      const avgBaseline = routes && routes.length > 0
+        ? (routes.reduce((s, r) => s + r.baselineDistance, 0) / routes.length).toFixed(2)
+        : 0;
+      const avgOptimized = routes && routes.length > 0
+        ? (routes.reduce((s, r) => s + r.optimizedDistance, 0) / routes.length).toFixed(2)
+        : 0;
+
+      const avgBaselineTime = routes && routes.length > 0
+        ? (routes.reduce((s, r) => s + r.baselineTimeSec, 0) / routes.length).toFixed(1)
+        : 0;
+      const avgOptimizedTime = routes && routes.length > 0
+        ? (routes.reduce((s, r) => s + r.optimizedTimeSec, 0) / routes.length).toFixed(1)
+        : 0;
+
+      const pct = (val, max) => max > 0 ? Math.round((val / max) * 100) : 0;
+      const occupancyPct = Math.round((analytics.occupiedLocations / analytics.totalLocations) * 100);
+      const emptyPct = Math.round((analytics.emptyLocations / analytics.totalLocations) * 100);
+
+      return (
+        <div>
+          {/* Executive KPI Section Heading */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+            <div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#f8fafc', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span>📈 Warehouse Key Performance Indicators (KPIs)</span>
+              </h2>
+              <p style={{ fontSize: '0.82rem', color: '#94a3b8', margin: '0.2rem 0 0 0' }}>
+                Executive operational benchmarks, inventory segmentation, and routing performance
+              </p>
+            </div>
+          </div>
+
+          {/* Executive KPI Summary Grid */}
+          <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+            <div className="kpi-card">
+              <span className="kpi-label">Total SKUs</span>
+              <span className="kpi-value">{analytics.totalProducts}</span>
+              <span className="kpi-subtext">Active Master Catalog</span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Storage Locations</span>
+              <span className="kpi-value">{analytics.totalLocations}</span>
+              <span className="kpi-subtext">
+                {analytics.occupiedLocations} Occupied · <strong style={{ color: '#4ade80' }}>{analytics.emptyLocations} Empty</strong>
+              </span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Demand Segments</span>
+              <span className="kpi-value">{analytics.fastProducts} / {analytics.mediumProducts} / {analytics.slowProducts}</span>
+              <span className="kpi-subtext">Fast (≥10) · Med (4-9) · Slow (&lt;4)</span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Mean Distance Reduction</span>
+              <span className="kpi-value" style={{ color: '#38bdf8' }}>
+                {analytics.averageDistanceReductionPct}%
+              </span>
+              <span className="kpi-subtext positive">Total Saved: {analytics.totalDistanceSaved} units</span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Suboptimal Edge Cases</span>
+              <span className="kpi-value" style={{ color: '#f87171' }}>{worseRoutes}</span>
+              <span className="kpi-subtext warning">NN heuristic worse than baseline</span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Replenishment Alerts</span>
+              <span className="kpi-value" style={{ color: analytics.replenishmentAlertsCount > 0 ? '#f87171' : '#4ade80' }}>
+                {analytics.replenishmentAlertsCount}
+              </span>
+              <span className="kpi-subtext warning">Stock below minimum threshold</span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Supervisor Approvals</span>
+              <span className="kpi-value">
+                {analytics.approvedSlotsCount} <span style={{ fontSize: '1rem', color: '#94a3b8' }}>approved</span>
+              </span>
+              <span className="kpi-subtext">
+                {analytics.recommendedSlotsCount} candidate slots pending review
+              </span>
+            </div>
+          </div>
+
+          {/* Performance Comparison: Baseline vs Optimized Travel Distance */}
+          <div className="section-card">
+            <div className="section-header">
+              <div>
+                <h2 className="section-title">📊 Travel Distance &amp; Picking Time Performance</h2>
+                <p className="section-desc">Comparison of baseline sequential travel distance vs Nearest Neighbor heuristic path across all order batches.</p>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '2rem' }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: '600' }}>Baseline (Sequential Route)</span>
+                  <span style={{ color: '#f8fafc', fontWeight: '700' }}>{avgBaseline} units</span>
+                </div>
+                <div className="progress-bar-bg" style={{ height: '20px' }}>
+                  <div className="progress-bar-fill" style={{ width: '100%', backgroundColor: '#64748b' }}></div>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '0.4rem' }}>
+                  Avg Time: <strong>{avgBaselineTime}s</strong> · Walk Speed: 1.2 u/s · Pick: 15s/item
+                </div>
+              </div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                  <span style={{ color: '#38bdf8', fontSize: '0.85rem', fontWeight: '600' }}>Optimized (Nearest Neighbor Route)</span>
+                  <span style={{ color: '#38bdf8', fontWeight: '700' }}>{avgOptimized} units</span>
+                </div>
+                <div className="progress-bar-bg" style={{ height: '20px' }}>
+                  <div className="progress-bar-fill" style={{ width: `${avgBaseline > 0 ? Math.round((avgOptimized / avgBaseline) * 100) : 100}%`, backgroundColor: '#38bdf8' }}></div>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#38bdf8', marginTop: '0.4rem' }}>
+                  Avg Time: <strong>{avgOptimizedTime}s</strong> · Reduction: <strong>{analytics.averageDistanceReductionPct}%</strong> (Saved: {(avgBaselineTime - avgOptimizedTime).toFixed(1)}s/pick cycle)
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Dual Metrics: Warehouse Physical Occupancy & Route Outcome Distribution */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            {/* Occupancy Card */}
+            <div className="section-card" style={{ margin: 0 }}>
+              <div className="section-header">
+                <div>
+                  <h2 className="section-title">Warehouse Facility Occupancy</h2>
+                  <p className="section-desc">Physical slot utilization across 40 grid locations</p>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                <span>Occupied Slots: <strong>{analytics.occupiedLocations} / {analytics.totalLocations}</strong></span>
+                <span style={{ color: '#818cf8', fontWeight: 'bold' }}>{occupancyPct}%</span>
+              </div>
+              <div className="progress-bar-bg" style={{ height: '14px' }}>
+                <div className="progress-bar-fill" style={{ width: `${occupancyPct}%`, backgroundColor: '#6366f1' }}></div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.25rem', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                <span>Available Empty Bins:</span>
+                <span style={{ color: '#4ade80', fontWeight: 'bold' }}>{analytics.emptyLocations} Empty Slots ({emptyPct}%)</span>
+              </div>
+              <div className="progress-bar-bg" style={{ height: '14px' }}>
+                <div className="progress-bar-fill" style={{ width: `${emptyPct}%`, backgroundColor: '#22c55e' }}></div>
+              </div>
+            </div>
+
+            {/* Route Outcome Distribution Card */}
+            <div className="section-card" style={{ margin: 0 }}>
+              <div className="section-header">
+                <div>
+                  <h2 className="section-title">Route Optimization Outcomes</h2>
+                  <p className="section-desc">{totalRoutes} total order batches evaluated</p>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginTop: '0.5rem' }}>
+                <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(34, 197, 94, 0.3)', textAlign: 'center' }}>
+                  <div style={{ color: '#4ade80', fontSize: '0.75rem', fontWeight: 600 }}>IMPROVED</div>
+                  <div style={{ color: '#4ade80', fontSize: '1.5rem', fontWeight: 700, margin: '0.2rem 0' }}>{improvedRoutes}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{pct(improvedRoutes, totalRoutes)}% of orders</div>
+                </div>
+                <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.3)', textAlign: 'center' }}>
+                  <div style={{ color: '#f87171', fontSize: '0.75rem', fontWeight: 600 }}>SUBOPTIMAL</div>
+                  <div style={{ color: '#f87171', fontSize: '1.5rem', fontWeight: 700, margin: '0.2rem 0' }}>{worseRoutes}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{pct(worseRoutes, totalRoutes)}% edge cases</div>
+                </div>
+                <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #334155', textAlign: 'center' }}>
+                  <div style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 600 }}>IDENTICAL</div>
+                  <div style={{ color: '#cbd5e1', fontSize: '1.5rem', fontWeight: 700, margin: '0.2rem 0' }}>{identicalRoutes}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{pct(identicalRoutes, totalRoutes)}% same</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Operational Strategy & Heuristic Auditing */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+            <div className="section-card" style={{ margin: 0 }}>
+              <div className="section-header">
+                <div>
+                  <h2 className="section-title" style={{ color: '#38bdf8' }}>🎯 Optimization Objectives</h2>
+                  <p className="section-desc">Core algorithmic design and operational priorities</p>
+                </div>
+              </div>
+              <ul style={{ listStyleType: 'disc', paddingLeft: '1.2rem', color: '#94a3b8', fontSize: '0.85rem', lineHeight: '1.8' }}>
+                <li><strong>Slotting Optimization:</strong> Position fast-moving items closer to dispatch point while strictly enforcing storage capacity and category compatibility.</li>
+                <li><strong>Pick-Path Routing:</strong> Reduce picker travel distance and picking time using Nearest Neighbor heuristic across historical order batches.</li>
+                <li><strong>Supervisor Governance:</strong> Retain strict human-in-the-loop approvals before updating physical bin allocations.</li>
+                <li><strong>Live Capacity Guard:</strong> Enforce physical shelf limits during restocking with overflow prevention.</li>
+              </ul>
+            </div>
+
+            <div className="section-card" style={{ margin: 0, borderColor: 'rgba(245, 158, 11, 0.3)' }}>
+              <div className="section-header">
+                <div>
+                  <h2 className="section-title" style={{ color: '#fbbf24' }}>⚠️ Heuristic Trade-offs &amp; Honest Auditing</h2>
+                  <p className="section-desc">Transparent limitations of heuristic models</p>
+                </div>
+              </div>
+              <ul style={{ listStyleType: 'disc', paddingLeft: '1.2rem', color: '#94a3b8', fontSize: '0.85rem', lineHeight: '1.8' }}>
+                <li><strong>Euclidean vs Graph Traversal:</strong> Straight-line metrics approximate walking paths; physical turns and racking traversal require graph shortest paths.</li>
+                <li><strong>Greedy Suboptimal Edge Cases:</strong> In {worseRoutes} of {totalRoutes} orders ({pct(worseRoutes, totalRoutes)}%), Nearest Neighbor greedily picks early nearby items that trap the picker far from remaining picks.</li>
+                <li><strong>Fixed Slot Availability:</strong> With only 10 empty locations initially available, candidate relocations are limited to available empty bins.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 2. PRODUCT MASTER COMPONENT ---
+    function ProductMaster({ products }) {
+      const [searchTerm, setSearchTerm] = useState('');
+      const [categoryFilter, setCategoryFilter] = useState('ALL');
+
+      if (!products) return <div className="state-container"><div className="spinner"></div>Loading products...</div>;
+
+      const categories = ['ALL', ...new Set(products.map(p => p.category))];
+      const filtered = products.filter(p => {
+        const matchesSearch = p.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              p.skuId.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesCat = categoryFilter === 'ALL' || p.category === categoryFilter;
+        return matchesSearch && matchesCat;
+      });
+
+      return (
+        <div className="section-card">
+          <div className="section-header">
+            <div>
+              <h2 className="section-title">2. Product Catalog & Current Storage Locations</h2>
+              <p className="section-desc">30 SKU master inventory records loaded from CLEAN.PRODUCTS</p>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="Search SKU or Product..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                style={{ background: '#0f172a', border: '1px solid #334155', color: '#f8fafc', padding: '0.45rem 0.8rem', borderRadius: '6px', fontSize: '0.85rem' }}
+              />
+              <select
+                value={categoryFilter}
+                onChange={e => setCategoryFilter(e.target.value)}
+                style={{ background: '#0f172a', border: '1px solid #334155', color: '#f8fafc', padding: '0.45rem 0.8rem', borderRadius: '6px', fontSize: '0.85rem' }}
+              >
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>SKU ID</th>
+                  <th>Product Name</th>
+                  <th>Category</th>
+                  <th>Required Capacity</th>
+                  <th>Current Location</th>
+                  <th>Hazard Class</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(p => (
+                  <tr key={p.skuId}>
+                    <td><strong>{p.skuId}</strong></td>
+                    <td>{p.productName}</td>
+                    <td><span className="badge" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}>{p.category}</span></td>
+                    <td>{p.requiredCapacity} units</td>
+                    <td><span className="badge badge-occupied">{p.currentLocation}</span></td>
+                    <td>
+                      <span className="badge" style={{
+                        backgroundColor: p.hazardClass === 'HAZMAT_BATTERY' ? 'rgba(239, 68, 68, 0.2)' : p.hazardClass === 'HAZMAT_FLAMMABLE' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.1)',
+                        color: p.hazardClass === 'HAZMAT_BATTERY' ? '#f87171' : p.hazardClass === 'HAZMAT_FLAMMABLE' ? '#fbbf24' : '#38bdf8',
+                        border: `1px solid ${p.hazardClass === 'HAZMAT_BATTERY' ? '#ef4444' : p.hazardClass === 'HAZMAT_FLAMMABLE' ? '#f59e0b' : '#0284c7'}`
+                      }}>
+                        {p.hazardClass || 'GENERAL'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 3. WAREHOUSE LOCATIONS GRID ---
+    function WarehouseLocations({ locations, products, demand, onVacateLocation }) {
+      const [selectedLoc, setSelectedLoc] = useState(null);
+      if (!locations) return <div className="state-container"><div className="spinner"></div>Loading locations...</div>;
+
+      const aisles = ['A', 'B', 'C', 'D', 'E'];
+      const byAisle = {};
+      aisles.forEach(a => {
+        byAisle[a] = locations.filter(l => l.aisle === a).sort((x, y) => x.locationId.localeCompare(y.locationId));
+      });
+
+      return (
+        <div className="section-card">
+          <div className="section-header">
+            <div>
+              <h2 className="section-title">3. Warehouse Physical Layout Grid (40 Locations)</h2>
+              <p className="section-desc">5 Aisles (A-E) x 8 Slots each. Click any bin to inspect physical coordinates, capacity, and occupying SKU details.</p>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                <span style={{ width: '12px', height: '12px', backgroundColor: '#6366f1', borderRadius: '3px', display: 'inline-block' }}></span>
+                <span>Occupied ({locations.filter(l => l.status === 'OCCUPIED').length})</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                <span style={{ width: '12px', height: '12px', backgroundColor: '#22c55e', borderRadius: '3px', display: 'inline-block' }}></span>
+                <span>Available Empty ({locations.filter(l => l.status === 'EMPTY').length})</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="warehouse-aisle-container">
+            {aisles.map(aisle => (
+              <div key={aisle} className="aisle-row">
+                <div className="aisle-label">Aisle {aisle}</div>
+                <div className="aisle-slots">
+                  {byAisle[aisle].map(loc => {
+                    const isEmpty = loc.status === 'EMPTY';
+                    const occupant = (products || []).find(p => p.currentLocation === loc.locationId);
+                    const isSelected = selectedLoc && selectedLoc.locationId === loc.locationId;
+                    return (
+                      <div
+                        key={loc.locationId}
+                        className={`slot-box ${isEmpty ? 'empty' : 'occupied'}`}
+                        onClick={() => setSelectedLoc(loc)}
+                        style={{
+                          outline: isSelected ? '2px solid #38bdf8' : 'none',
+                          boxShadow: isSelected ? '0 0 10px rgba(56, 189, 248, 0.5)' : 'none',
+                          padding: '0.45rem 0.35rem',
+                          minWidth: '75px',
+                          minHeight: '75px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span className="slot-id" style={{ color: isEmpty ? '#4ade80' : '#818cf8', fontSize: '0.8rem' }}>{loc.locationId}</span>
+                          <span style={{ fontSize: '0.6rem', color: '#64748b' }}>({loc.x},{loc.y})</span>
+                        </div>
+                        <div style={{ margin: '0.2rem 0', minHeight: '1.6rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                          {isEmpty ? (
+                            <span style={{ fontSize: '0.68rem', color: '#4ade80', fontWeight: 'bold' }}>EMPTY</span>
+                          ) : occupant ? (
+                            <>
+                              <span style={{ fontSize: '0.72rem', fontWeight: 'bold', color: '#f8fafc', lineHeight: 1.1 }}>{occupant.skuId}</span>
+                              <span style={{ fontSize: '0.62rem', color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '70px' }} title={occupant.productName}>
+                                {occupant.productName}
+                              </span>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: '0.68rem', color: '#818cf8', fontWeight: 'bold' }}>OCCUPIED</span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.62rem', color: '#94a3b8' }}>
+                          <span>Cap:{loc.capacity}</span>
+                          <span style={{ color: loc.hazardAllowed === 'HAZMAT_BATTERY' ? '#f87171' : loc.hazardAllowed === 'HAZMAT_FLAMMABLE' ? '#fbbf24' : '#64748b', fontWeight: 'bold' }}>
+                            {loc.hazardAllowed === 'HAZMAT_BATTERY' ? '⚡' : loc.hazardAllowed === 'HAZMAT_FLAMMABLE' ? '🔥' : ''}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {selectedLoc && (() => {
+            const occupants = (products || []).filter(p => p.currentLocation === selectedLoc.locationId);
+            const isOccupied = occupants.length > 0;
+            const primaryOccupant = occupants[0];
+            const demandInfo = primaryOccupant && demand ? demand.find(d => d.skuId === primaryOccupant.skuId) : null;
+            const utilizationPct = primaryOccupant ? Math.round((primaryOccupant.requiredCapacity / selectedLoc.capacity) * 100) : 0;
+
+            return (
+              <div style={{ marginTop: '1.5rem', background: '#0f172a', padding: '1.25rem 1.5rem', borderRadius: '8px', border: `1px solid ${isOccupied ? '#818cf8' : '#22c55e'}` }}>
+                {/* Header Row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', paddingBottom: '0.75rem', borderBottom: '1px solid #1e293b', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <h3 style={{ fontSize: '1.15rem', color: '#f8fafc', margin: 0 }}>
+                      📍 Location: <strong style={{ color: isOccupied ? '#818cf8' : '#4ade80' }}>{selectedLoc.locationId}</strong> (Aisle {selectedLoc.aisle})
+                    </h3>
+                    <span className={`badge ${selectedLoc.status === 'EMPTY' ? 'badge-empty' : 'badge-occupied'}`}>
+                      {selectedLoc.status === 'EMPTY' ? '🟢 AVAILABLE EMPTY' : '🟣 OCCUPIED'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {selectedLoc.status === 'OCCUPIED' && onVacateLocation && (
+                      <button
+                        className="btn btn-reject"
+                        style={{ padding: '0.4rem 0.85rem', fontSize: '0.8rem' }}
+                        onClick={() => {
+                          onVacateLocation(selectedLoc.locationId);
+                          setSelectedLoc(prev => ({ ...prev, status: 'EMPTY' }));
+                        }}
+                      >
+                        🗑️ Vacate Slot (Remove SKU)
+                      </button>
+                    )}
+                    <button
+                      className="btn"
+                      onClick={() => setSelectedLoc(null)}
+                      style={{ background: '#334155', color: '#f8fafc', padding: '0.4rem 0.85rem', fontSize: '0.8rem' }}
+                    >
+                      ✕ Close
+                    </button>
+                  </div>
+                </div>
+
+                {/* Details Grid: Slot Specs on Left, Occupying SKU Info on Right */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
+                  {/* Left Column: Physical Bin Specs */}
+                  <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '6px', border: '1px solid #334155' }}>
+                    <h4 style={{ color: '#38bdf8', fontSize: '0.85rem', textTransform: 'uppercase', marginBottom: '0.6rem', letterSpacing: '0.05em' }}>
+                      📐 Physical Slot Specifications
+                    </h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', fontSize: '0.82rem' }}>
+                      <div>
+                        <span style={{ color: '#94a3b8' }}>Grid Coordinates:</span>
+                        <div style={{ fontWeight: 600, color: '#f8fafc' }}>({selectedLoc.x}, {selectedLoc.y})</div>
+                      </div>
+                      <div>
+                        <span style={{ color: '#94a3b8' }}>Max Physical Capacity:</span>
+                        <div style={{ fontWeight: 600, color: '#f8fafc' }}>{selectedLoc.capacity} units</div>
+                      </div>
+                      <div>
+                        <span style={{ color: '#94a3b8' }}>Allowed Category:</span>
+                        <div style={{ fontWeight: 600, color: '#f8fafc' }}>{selectedLoc.allowedCategory}</div>
+                      </div>
+                      <div>
+                        <span style={{ color: '#94a3b8' }}>Hazard Compatibility:</span>
+                        <div style={{
+                          fontWeight: 600,
+                          color: selectedLoc.hazardAllowed === 'HAZMAT_BATTERY' ? '#f87171' : selectedLoc.hazardAllowed === 'HAZMAT_FLAMMABLE' ? '#fbbf24' : '#4ade80'
+                        }}>
+                          {selectedLoc.hazardAllowed || 'GENERAL'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Occupant SKU Details */}
+                  <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '6px', border: `1px solid ${isOccupied ? 'rgba(129, 140, 248, 0.4)' : 'rgba(34, 197, 94, 0.4)'}` }}>
+                    <h4 style={{ color: isOccupied ? '#c084fc' : '#4ade80', fontSize: '0.85rem', textTransform: 'uppercase', marginBottom: '0.6rem', letterSpacing: '0.05em' }}>
+                      {isOccupied ? '📦 Occupying SKU & Product Details' : '🟢 Slot Availability Status'}
+                    </h4>
+
+                    {isOccupied && primaryOccupant ? (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                          <div>
+                            <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
+                              {primaryOccupant.productName}
+                            </span>
+                            <span className="badge badge-occupied" style={{ marginLeft: '0.5rem', fontSize: '0.75rem' }}>
+                              {primaryOccupant.skuId}
+                            </span>
+                          </div>
+                          {demandInfo && (
+                            <span className={`badge badge-${demandInfo.demandClass.toLowerCase()}`}>
+                              {demandInfo.demandClass} Velocity
+                            </span>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', fontSize: '0.82rem' }}>
+                          <div>
+                            <span style={{ color: '#94a3b8' }}>Product Category:</span>
+                            <div style={{ fontWeight: 600, color: '#f8fafc' }}>{primaryOccupant.category}</div>
+                          </div>
+                          <div>
+                            <span style={{ color: '#94a3b8' }}>Required Capacity:</span>
+                            <div style={{ fontWeight: 600, color: '#f8fafc' }}>{primaryOccupant.requiredCapacity} units</div>
+                          </div>
+                          <div>
+                            <span style={{ color: '#94a3b8' }}>Hazard Classification:</span>
+                            <div style={{
+                              fontWeight: 600,
+                              color: primaryOccupant.hazardClass === 'HAZMAT_BATTERY' ? '#f87171' : primaryOccupant.hazardClass === 'HAZMAT_FLAMMABLE' ? '#fbbf24' : '#94a3b8'
+                            }}>
+                              {primaryOccupant.hazardClass || 'GENERAL'}
+                            </div>
+                          </div>
+                          <div>
+                            <span style={{ color: '#94a3b8' }}>Slot Utilization:</span>
+                            <div style={{ fontWeight: 600, color: utilizationPct > 80 ? '#fbbf24' : '#4ade80' }}>
+                              {utilizationPct}% ({primaryOccupant.requiredCapacity}/{selectedLoc.capacity} u)
+                            </div>
+                          </div>
+                        </div>
+
+                        {demandInfo && (
+                          <div style={{ marginTop: '0.6rem', paddingTop: '0.5rem', borderTop: '1px solid #334155', fontSize: '0.8rem', color: '#94a3b8' }}>
+                            Order Frequency: <strong style={{ color: '#f8fafc' }}>{demandInfo.orderFrequency} orders</strong> · Total Quantity Picked: <strong style={{ color: '#f8fafc' }}>{demandInfo.totalQuantity} units</strong>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '0.85rem', color: '#94a3b8', lineHeight: '1.6' }}>
+                        <p style={{ color: '#4ade80', fontWeight: 600, margin: 0 }}>
+                          ✅ This location is completely unoccupied and available.
+                        </p>
+                        <p style={{ marginTop: '0.4rem', marginBottom: 0 }}>
+                          Can accept candidate SKUs up to <strong style={{ color: '#f8fafc' }}>{selectedLoc.capacity} required capacity</strong> matching category <strong style={{ color: '#f8fafc' }}>{selectedLoc.allowedCategory}</strong> and hazard clearance <strong style={{ color: '#f8fafc' }}>{selectedLoc.hazardAllowed || 'GENERAL'}</strong>.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      );
+    }
+
+    // --- 4. DEMAND CLASSIFICATION & MARKET BASKET AFFINITY COMPONENT ---
+    function DemandClassification({ demand, affinityPairs }) {
+      const [classFilter, setClassFilter] = useState('ALL');
+      const [affinityFilter, setAffinityFilter] = useState('TOP10');
+      if (!demand) return <div className="state-container"><div className="spinner"></div>Loading demand...</div>;
+
+      const filtered = classFilter === 'ALL' ? demand : demand.filter(d => d.demandClass === classFilter);
+      const pairs = affinityPairs || [];
+      const displayedPairs = affinityFilter === 'TOP5' ? pairs.slice(0, 5)
+                           : affinityFilter === 'TOP10' ? pairs.slice(0, 10)
+                           : pairs;
+
+      return (
+        <div>
+          <div className="section-card">
+            <div className="section-header">
+              <div>
+                <h2 className="section-title">4. SKU Demand Classification (Fast / Medium / Slow)</h2>
+                <p className="section-desc">Classified by Order Frequency: Fast (≥10 orders), Medium (4-9 orders), Slow (&lt;4 orders)</p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {['ALL', 'FAST', 'MEDIUM', 'SLOW'].map(c => (
+                  <button
+                    key={c}
+                    className="btn"
+                    onClick={() => setClassFilter(c)}
+                    style={{
+                      background: classFilter === c ? '#38bdf8' : '#1e293b',
+                      color: classFilter === c ? '#0f172a' : '#f8fafc',
+                      border: '1px solid #334155'
+                    }}
+                  >
+                    {c} {c !== 'ALL' && `(${demand.filter(d => d.demandClass === c).length})`}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="table-responsive">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>SKU ID</th>
+                    <th>Product Name</th>
+                    <th>Category</th>
+                    <th>Current Bin</th>
+                    <th>Order Frequency</th>
+                    <th>Total Quantity Ordered</th>
+                    <th>Demand Classification</th>
+                    <th>Volatility (CV)</th>
+                    <th>Volatility Class</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(d => (
+                    <tr key={d.skuId}>
+                      <td><strong>{d.skuId}</strong></td>
+                      <td>{d.productName}</td>
+                      <td>{d.category}</td>
+                      <td><span className="badge badge-occupied">{d.currentLocation || '-'}</span></td>
+                      <td><strong>{d.orderFrequency}</strong> orders</td>
+                      <td>{d.totalQuantity} units</td>
+                      <td>
+                        <span className={`badge badge-${d.demandClass.toLowerCase()}`}>
+                          {d.demandClass}
+                        </span>
+                      </td>
+                      <td>{d.demandCv !== undefined ? d.demandCv.toFixed(2) : '0.00'}</td>
+                      <td>
+                        <span className="badge" style={{
+                          backgroundColor: d.volatilityClass === 'VOLATILE' ? 'rgba(239, 68, 68, 0.2)' : d.volatilityClass === 'MODERATE' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(34, 197, 94, 0.2)',
+                          color: d.volatilityClass === 'VOLATILE' ? '#f87171' : d.volatilityClass === 'MODERATE' ? '#fbbf24' : '#4ade80',
+                          border: `1px solid ${d.volatilityClass === 'VOLATILE' ? '#ef4444' : d.volatilityClass === 'MODERATE' ? '#f59e0b' : '#22c55e'}`
+                        }}>
+                          {d.volatilityClass || 'STABLE'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Market Basket & Order Affinity Analysis Section */}
+          <div className="section-card" style={{ marginTop: '1.5rem' }}>
+            <div className="section-header">
+              <div>
+                <h2 className="section-title">🛒 Market Basket & Order Affinity Analysis (Co-Occurrence Bundles)</h2>
+                <p className="section-desc">
+                  Pairwise SKU co-occurrences across historical orders. High-affinity product pairs are prioritized by the Slotting Recommender
+                  to be clustered in neighboring bays/aisles to eliminate multi-line cross-aisle travel.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {[
+                  { id: 'TOP5', label: 'Top 5 Bundles' },
+                  { id: 'TOP10', label: 'Top 10 Bundles' },
+                  { id: 'ALL', label: `All Pairs (${pairs.length})` }
+                ].map(b => (
+                  <button
+                    key={b.id}
+                    className="btn"
+                    onClick={() => setAffinityFilter(b.id)}
+                    style={{
+                      background: affinityFilter === b.id ? '#a855f7' : '#1e293b',
+                      color: affinityFilter === b.id ? '#ffffff' : '#f8fafc',
+                      border: '1px solid #475569'
+                    }}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {pairs.length === 0 ? (
+              <p style={{ color: '#94a3b8', fontStyle: 'italic' }}>No affinity pair data available.</p>
+            ) : (
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Co-Ordered Product Pair</th>
+                      <th>SKU Pair</th>
+                      <th>Categories</th>
+                      <th>Co-Orders</th>
+                      <th>Orders (A / B)</th>
+                      <th>Cosine Affinity</th>
+                      <th>Jaccard Index</th>
+                      <th>Slotting Clustering Strategy</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayedPairs.map((p, idx) => (
+                      <tr key={p.pairId || idx}>
+                        <td><strong>#{idx + 1}</strong></td>
+                        <td>
+                          <strong>{p.pairLabel || `${p.productA} + ${p.productB}`}</strong>
+                        </td>
+                        <td>
+                          <span className="badge" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>{p.skuA}</span>
+                          {' + '}
+                          <span className="badge" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>{p.skuB}</span>
+                        </td>
+                        <td>
+                          <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                            {p.categoryA} / {p.categoryB}
+                          </span>
+                        </td>
+                        <td>
+                          <strong style={{ color: '#4ade80' }}>{p.coOccurrenceCount} orders</strong>
+                        </td>
+                        <td>{p.ordersA} / {p.ordersB}</td>
+                        <td>
+                          <span className="badge" style={{
+                            backgroundColor: p.affinityScore >= 0.4 ? 'rgba(34, 197, 94, 0.2)' : 'rgba(168, 85, 247, 0.2)',
+                            color: p.affinityScore >= 0.4 ? '#4ade80' : '#c084fc',
+                            border: `1px solid ${p.affinityScore >= 0.4 ? '#22c55e' : '#a855f7'}`
+                          }}>
+                            {(p.affinityScore * 100).toFixed(1)}%
+                          </span>
+                        </td>
+                        <td>{(p.jaccardIndex !== undefined ? p.jaccardIndex.toFixed(3) : '—')}</td>
+                        <td>
+                          <span style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>
+                            {p.coOccurrenceCount >= 4
+                              ? '🔥 High-Priority Cluster (Slot in adjacent bays)'
+                              : 'Recommended neighboring aisle/shelf placement'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // --- 5. SLOT RECOMMENDATIONS COMPONENT ---
+    // --- 5. STORAGE SLOTTING RECOMMENDER ENGINE (READ-ONLY AUDIT LOG) ---
+    function SlotRecommendations({ recommendations, onResetDemo, isResetting }) {
+      const [hideInfeasible, setHideInfeasible] = useState(true);
+      const [statusFilter, setStatusFilter] = useState('ALL');
+
+      if (!recommendations) return <div className="state-container"><div className="spinner"></div>Loading recommendations...</div>;
+
+      const recommendedCount = recommendations.filter(r => r.recommendationStatus === 'RECOMMENDED').length;
+      const noLocCount = recommendations.filter(r => r.recommendationStatus === 'NO_FEASIBLE_LOCATION').length;
+      const approvedCount = recommendations.filter(r => r.recommendationStatus === 'APPROVED').length;
+      const rejectedCount = recommendations.filter(r => r.recommendationStatus === 'REJECTED').length;
+
+      // Filter logic:
+      // When hideInfeasible is true and statusFilter is 'ALL', hide 'NO_FEASIBLE_LOCATION' rows (shows only candidate/actionable rows).
+      // When hideInfeasible is false, show all rows (or the specific status chosen).
+      let filtered = recommendations;
+      if (statusFilter !== 'ALL') {
+        filtered = filtered.filter(r => r.recommendationStatus === statusFilter);
+      } else if (hideInfeasible) {
+        filtered = filtered.filter(r => r.recommendationStatus !== 'NO_FEASIBLE_LOCATION');
+      }
+
+      return (
+        <div className="section-card">
+          <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h2 className="section-title">5. Storage Slotting Engine — Evaluated Audit Log</h2>
+              <p className="section-desc">
+                Read-only optimization audit log. Evaluates all 30 SKUs against warehouse constraints (capacity, category, hazard class, and dispatch proximity).
+              </p>
+            </div>
+            {onResetDemo && (
+              <button
+                className="btn"
+                onClick={onResetDemo}
+                disabled={isResetting}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.45rem',
+                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                  color: '#f87171',
+                  border: '1px solid #ef4444',
+                  padding: '0.45rem 0.95rem',
+                  borderRadius: '6px',
+                  fontWeight: '600',
+                  fontSize: '0.85rem',
+                  cursor: isResetting ? 'wait' : 'pointer'
+                }}
+                title="Reset warehouse database and slot allocations back to initial baseline"
+              >
+                <span>{isResetting ? '⏳ Resetting...' : '↺ Reset to Baseline'}</span>
+              </button>
+            )}
+          </div>
+
+          {/* Controls: Filter Toggle and Status Filters */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.2rem', paddingBottom: '0.8rem', borderBottom: '1px solid #1e293b' }}>
+            <label style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.6rem',
+              cursor: 'pointer',
+              background: hideInfeasible ? 'rgba(56, 189, 248, 0.12)' : '#1e293b',
+              border: `1px solid ${hideInfeasible ? '#38bdf8' : '#334155'}`,
+              padding: '0.45rem 0.9rem',
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              color: hideInfeasible ? '#38bdf8' : '#94a3b8',
+              fontWeight: '500',
+              userSelect: 'none'
+            }}>
+              <input
+                type="checkbox"
+                checked={hideInfeasible}
+                onChange={e => {
+                  setHideInfeasible(e.target.checked);
+                  if (statusFilter === 'NO_FEASIBLE_LOCATION' && e.target.checked) {
+                    setStatusFilter('ALL');
+                  }
+                }}
+                style={{ width: '16px', height: '16px', accentColor: '#38bdf8', cursor: 'pointer' }}
+              />
+              <span>Hide Infeasible Slots ({noLocCount} rows) — Show Feasible Candidates Only</span>
+            </label>
+
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {['ALL', 'RECOMMENDED', 'NO_FEASIBLE_LOCATION', 'APPROVED', 'REJECTED'].map(s => (
+                <button
+                  key={s}
+                  className="btn"
+                  onClick={() => {
+                    setStatusFilter(s);
+                    if (s === 'NO_FEASIBLE_LOCATION') {
+                      setHideInfeasible(false);
+                    }
+                  }}
+                  style={{
+                    background: statusFilter === s ? '#38bdf8' : '#1e293b',
+                    color: statusFilter === s ? '#0f172a' : '#f8fafc',
+                    border: '1px solid #334155',
+                    fontSize: '0.8rem',
+                    padding: '0.35rem 0.75rem'
+                  }}
+                >
+                  {s.replace(/_/g, ' ')} ({recommendations.filter(r => s === 'ALL' || r.recommendationStatus === s).length})
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Rec ID</th>
+                  <th>SKU</th>
+                  <th>Product</th>
+                  <th>Class</th>
+                  <th>Current Bin</th>
+                  <th>Candidate Bin</th>
+                  <th>Dist to Depot</th>
+                  <th>Distance Saved</th>
+                  <th>Status</th>
+                  <th>Explainable Audit Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(r => (
+                  <tr key={r.recommendationId}>
+                    <td><strong>{r.recommendationId}</strong></td>
+                    <td>{r.skuId}</td>
+                    <td>{r.productName}</td>
+                    <td><span className={`badge badge-${r.demandClass.toLowerCase()}`}>{r.demandClass}</span></td>
+                    <td><span className="badge badge-occupied">{r.currentLocation}</span></td>
+                    <td>
+                      {r.recommendedLocation !== 'NONE' ? (
+                        <div>
+                          <span className="badge badge-empty">{r.recommendedLocation}</span>
+                          {r.reason && r.reason.includes('Co-ordered with') && (
+                            <div style={{ marginTop: '0.25rem' }}>
+                              <span className="badge" style={{ backgroundColor: 'rgba(168,85,247,0.2)', color: '#c084fc', border: '1px solid #a855f7', fontSize: '0.65rem' }}>
+                                Affinity Clustered
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: '#94a3b8' }}>—</span>
+                      )}
+                    </td>
+                    <td>{r.distance > 0 ? `${r.distance} units` : '—'}</td>
+                    <td>
+                      {r.distanceSaved && r.distanceSaved > 0 ? (
+                        <strong style={{ color: '#4ade80' }}>+{r.distanceSaved} u</strong>
+                      ) : (
+                        <span style={{ color: '#94a3b8' }}>0 u</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className="badge" style={{
+                        backgroundColor: r.recommendationStatus === 'APPROVED' ? 'rgba(34,197,94,0.2)' :
+                                         r.recommendationStatus === 'REJECTED' ? 'rgba(239,68,68,0.2)' :
+                                         r.recommendationStatus === 'RECOMMENDED' ? 'rgba(56,189,248,0.2)' : 'rgba(245,158,11,0.2)',
+                        color: r.recommendationStatus === 'APPROVED' ? '#4ade80' :
+                               r.recommendationStatus === 'REJECTED' ? '#f87171' :
+                               r.recommendationStatus === 'RECOMMENDED' ? '#38bdf8' : '#fbbf24',
+                        border: `1px solid ${r.recommendationStatus === 'APPROVED' ? '#22c55e' : r.recommendationStatus === 'REJECTED' ? '#ef4444' : r.recommendationStatus === 'RECOMMENDED' ? '#38bdf8' : '#f59e0b'}`
+                      }}>
+                        {r.recommendationStatus}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: '0.8rem', color: '#cbd5e1', maxWidth: '340px' }}>{r.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 6. PICK PATH OPTIMIZATION COMPONENT ---
+    function PickPathOptimization({ routes, products, locations }) {
+      const [selectedOrderId, setSelectedOrderId] = useState('ORD001');
+      const [filterWorse, setFilterWorse] = useState(false);
+
+      // Ad-Hoc Simulation States
+      const [customSkus, setCustomSkus] = useState(['SKU001', 'SKU014', 'SKU025', 'SKU009']);
+      const [simResult, setSimResult] = useState(null);
+
+      if (!routes || routes.length === 0) return <div className="state-container"><div className="spinner"></div>Loading routes...</div>;
+
+      const selectedRoute = routes.find(r => r.orderId === selectedOrderId) || routes[0];
+      const worseCases = routes.filter(r => r.routeStatus === 'WORSE');
+      const displayList = filterWorse ? worseCases : routes;
+
+      // 4-Way Operational Matrix Averages
+      const avgBaseline = (routes.reduce((s, r) => s + r.baselineDistance, 0) / routes.length).toFixed(1);
+      const avgRouteOnly = (routes.reduce((s, r) => s + (r.routeOnlyDistance || r.optimizedDistance), 0) / routes.length).toFixed(1);
+      const avgSlotOnly = (routes.reduce((s, r) => s + (r.slotOnlyDistance || r.baselineDistance), 0) / routes.length).toFixed(1);
+      const avgDualOpt = (routes.reduce((s, r) => s + r.optimizedDistance, 0) / routes.length).toFixed(1);
+
+      const roSavingsPct = (((avgBaseline - avgRouteOnly) / avgBaseline) * 100).toFixed(1);
+      const soSavingsPct = (((avgBaseline - avgSlotOnly) / avgBaseline) * 100).toFixed(1);
+      const dualSavingsPct = (((avgBaseline - avgDualOpt) / avgBaseline) * 100).toFixed(1);
+
+      // Real-time Pick-Path Calculation
+      const calcDist = (p1, p2) => Math.sqrt(Math.pow(p2[0] - p1[0], 2) + Math.pow(p2[1] - p1[1], 2));
+
+      const runCustomSimulation = () => {
+        if (!products || !locations || customSkus.length === 0) return;
+
+        const locMap = {};
+        locations.forEach(l => { locMap[l.locationId] = [l.x, l.y]; });
+
+        const skuMap = {};
+        products.forEach(p => {
+          skuMap[p.skuId] = {
+            name: p.productName,
+            loc: p.currentLocation,
+            coord: locMap[p.currentLocation] || [0, 0]
+          };
+        });
+
+        const stops = [];
+        const seenLocs = [];
+        customSkus.forEach(s => {
+          if (skuMap[s]) {
+            const locId = skuMap[s].loc;
+            if (!seenLocs.includes(locId)) {
+              seenLocs.push(locId);
+              stops.push({ sku: s, loc: locId, coord: skuMap[s].coord });
+            }
+          }
+        });
+
+        if (stops.length === 0) return;
+
+        const dispatch = [0, 0];
+
+        // 1. Baseline Sequential Tour
+        let baseDist = 0;
+        let curr = dispatch;
+        stops.forEach(st => {
+          baseDist += calcDist(curr, st.coord);
+          curr = st.coord;
+        });
+        baseDist += calcDist(curr, dispatch);
+        const baseTime = (baseDist / 1.2) + (stops.length * 15);
+        const baseSeq = 'START(0,0) -> ' + stops.map(s => s.loc).join(' -> ') + ' -> END(0,0)';
+
+        // 2. Nearest Neighbor Tour
+        let unvisited = [...stops];
+        let nnDist = 0;
+        let currNn = dispatch;
+        const nnSequence = [];
+
+        while (unvisited.length > 0) {
+          let nearestIdx = 0;
+          let minDist = Infinity;
+          for (let i = 0; i < unvisited.length; i++) {
+            const d = calcDist(currNn, unvisited[i].coord);
+            if (d < minDist) {
+              minDist = d;
+              nearestIdx = i;
+            }
+          }
+          nnDist += minDist;
+          currNn = unvisited[nearestIdx].coord;
+          nnSequence.push(unvisited[nearestIdx].loc);
+          unvisited.splice(nearestIdx, 1);
+        }
+        nnDist += calcDist(currNn, dispatch);
+        const nnTime = (nnDist / 1.2) + (stops.length * 15);
+        const nnSeq = 'START(0,0) -> ' + nnSequence.join(' -> ') + ' -> END(0,0)';
+
+        const distSaved = Number((baseDist - nnDist).toFixed(2));
+        const pctReduction = baseDist > 0 ? Number(((distSaved / baseDist) * 100).toFixed(2)) : 0;
+        const timeSaved = Number((baseTime - nnTime).toFixed(2));
+        const status = distSaved > 0 ? 'IMPROVED' : (distSaved < 0 ? 'WORSE' : 'IDENTICAL');
+
+        setSimResult({
+          skus: customSkus,
+          stopsCount: stops.length,
+          baseDist: Number(baseDist.toFixed(2)),
+          baseTime: Number(baseTime.toFixed(1)),
+          baseSeq,
+          nnDist: Number(nnDist.toFixed(2)),
+          nnTime: Number(nnTime.toFixed(1)),
+          nnSeq,
+          distSaved,
+          pctReduction,
+          timeSaved,
+          status
+        });
+      };
+
+      const toggleCustomSku = (skuId) => {
+        setCustomSkus(prev =>
+          prev.includes(skuId) ? prev.filter(s => s !== skuId) : [...prev, skuId]
+        );
+      };
+
+      return (
+        <div className="section-card">
+          <div className="section-header">
+            <div>
+              <h2 className="section-title">6. Pick-Path Optimization & Routing Engine</h2>
+              <p className="section-desc">2x2 Operational Matrix: Disentangling routing heuristic gains from slot relocation gains across 50 orders</p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <button
+                className="btn"
+                onClick={() => setFilterWorse(!filterWorse)}
+                style={{
+                  background: filterWorse ? 'rgba(239, 68, 68, 0.3)' : '#1e293b',
+                  color: filterWorse ? '#f87171' : '#94a3b8',
+                  border: '1px solid #ef4444'
+                }}
+              >
+                ⚠️ {filterWorse ? 'Showing Suboptimal Cases Only (' + worseCases.length + ')' : `Show Suboptimal Edge Cases (${worseCases.length})`}
+              </button>
+              <select
+                value={selectedOrderId}
+                onChange={e => setSelectedOrderId(e.target.value)}
+                style={{ background: '#0f172a', border: '1px solid #38bdf8', color: '#f8fafc', padding: '0.5rem 1rem', borderRadius: '6px', fontSize: '0.9rem', fontWeight: '600' }}
+              >
+                {displayList.map(r => (
+                  <option key={r.orderId} value={r.orderId}>
+                    {r.orderId} - {r.routeStatus} ({r.pctDistanceReduction > 0 ? `-${r.pctDistanceReduction}%` : `+${Math.abs(r.pctDistanceReduction)}%`})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* 2x2 Operational Comparison Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+            <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>1. Baseline (Old Layout + Naive)</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#f8fafc', marginTop: '0.2rem' }}>{avgBaseline} <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>units</span></div>
+              <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.3rem' }}>Original layout & FIFO route</div>
+            </div>
+
+            <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #38bdf8' }}>
+              <div style={{ fontSize: '0.75rem', color: '#38bdf8', textTransform: 'uppercase' }}>2. Route-Only (Old Layout + NN)</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#38bdf8', marginTop: '0.2rem' }}>{avgRouteOnly} <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>units</span></div>
+              <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: '0.3rem' }}>-{roSavingsPct}% travel reduction</div>
+            </div>
+
+            <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #a855f7' }}>
+              <div style={{ fontSize: '0.75rem', color: '#a855f7', textTransform: 'uppercase' }}>3. Slot-Only (New Layout + Naive)</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#c084fc', marginTop: '0.2rem' }}>{avgSlotOnly} <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>units</span></div>
+              <div style={{ fontSize: '0.8rem', color: '#c084fc', marginTop: '0.3rem' }}>-{soSavingsPct}% travel reduction</div>
+            </div>
+
+            <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', border: '1px solid #22c55e' }}>
+              <div style={{ fontSize: '0.75rem', color: '#4ade80', textTransform: 'uppercase' }}>4. Dual Opt (New Layout + NN)</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#4ade80', marginTop: '0.2rem' }}>{avgDualOpt} <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>units</span></div>
+              <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: '0.3rem' }}>-{dualSavingsPct}% net synergy saved</div>
+            </div>
+          </div>
+
+          {filterWorse && (
+            <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '8px', padding: '1rem', marginBottom: '1.5rem', color: '#fca5a5', fontSize: '0.88rem' }}>
+              <strong>⚠️ AI-Resistant Heuristic Analysis: Why is Nearest Neighbor worse on {worseCases.length} orders?</strong>
+              <p style={{ marginTop: '0.4rem', color: '#f87171' }}>
+                Nearest Neighbor is a greedy heuristic that always visits the nearest unvisited SKU. In certain warehouse layouts with scattered picks across parallel aisles, a greedy early pick can trap the picker at the far corner of the warehouse, forcing an expensive empty return trip back across multiple aisles. This proves why claims of heuristic "optimality" are mathematically unsound without full 2-opt/TSP solving.
+              </p>
+            </div>
+          )}
+
+          {selectedRoute && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
+              <div style={{ background: '#0f172a', padding: '1.25rem', borderRadius: '8px', border: '1px solid #334155' }}>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Baseline Sequential Route (Old Layout)</span>
+                <div style={{ fontSize: '1.75rem', fontWeight: '700', color: '#f8fafc', marginTop: '0.25rem' }}>
+                  {selectedRoute.baselineDistance} <span style={{ fontSize: '1rem', color: '#94a3b8' }}>units</span>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.5rem' }}>
+                  Est. Time: <strong>{selectedRoute.baselineTimeSec}s</strong> (Walk: 1.2 u/s + 15s/pick)
+                </div>
+                <div className="route-sequence-box" style={{ borderColor: '#64748b', color: '#cbd5e1' }}>
+                  {selectedRoute.baselineRouteSequence}
+                </div>
+              </div>
+
+              <div style={{ background: '#0f172a', padding: '1.25rem', borderRadius: '8px', border: `1px solid ${selectedRoute.routeStatus === 'WORSE' ? '#ef4444' : '#38bdf8'}` }}>
+                <span style={{ fontSize: '0.75rem', color: selectedRoute.routeStatus === 'WORSE' ? '#f87171' : '#38bdf8', textTransform: 'uppercase', fontWeight: '600' }}>
+                  Dual Optimization (New Layout + NN)
+                </span>
+                <div style={{ fontSize: '1.75rem', fontWeight: '700', color: selectedRoute.routeStatus === 'WORSE' ? '#f87171' : '#38bdf8', marginTop: '0.25rem' }}>
+                  {selectedRoute.optimizedDistance} <span style={{ fontSize: '1rem', color: '#94a3b8' }}>units</span>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.5rem' }}>
+                  Est. Time: <strong>{selectedRoute.optimizedTimeSec}s</strong> ({selectedRoute.timeSavedSec > 0 ? `Saved: ${selectedRoute.timeSavedSec}s` : `Added: ${Math.abs(selectedRoute.timeSavedSec)}s`})
+                </div>
+                <div className="route-sequence-box" style={{ borderColor: selectedRoute.routeStatus === 'WORSE' ? '#ef4444' : '#38bdf8' }}>
+                  {selectedRoute.optimizedRouteSequence}
+                </div>
+              </div>
+
+              <div style={{ background: '#0f172a', padding: '1.25rem', borderRadius: '8px', border: '1px solid #334155' }}>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>Operational Variance & Details</span>
+                <div style={{ fontSize: '1.75rem', fontWeight: '700', color: selectedRoute.distanceSaved >= 0 ? '#4ade80' : '#f87171', marginTop: '0.25rem' }}>
+                  {selectedRoute.pctDistanceReduction}%
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.5rem' }}>
+                  Distance Saved: <strong>{selectedRoute.distanceSaved > 0 ? `+${selectedRoute.distanceSaved}` : selectedRoute.distanceSaved} units</strong>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: '#cbd5e1', marginTop: '0.5rem', lineHeight: '1.4' }}>
+                  Route-Only: <strong>{selectedRoute.routeOnlyDistance || selectedRoute.optimizedDistance} u</strong> · Slot-Only: <strong>{selectedRoute.slotOnlyDistance || selectedRoute.baselineDistance} u</strong>
+                </div>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.82rem', color: selectedRoute.routeStatus === 'WORSE' ? '#fca5a5' : '#94a3b8' }}>
+                  {selectedRoute.notes}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem', color: '#f8fafc' }}>Batch Order Pick-Path Comparison Table (50 Orders)</h3>
+          <div className="table-responsive" style={{ maxHeight: '320px' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Order ID</th>
+                  <th>1. Baseline Old</th>
+                  <th>2. Route-Only NN</th>
+                  <th>3. Slot-Only New</th>
+                  <th>4. Dual Opt</th>
+                  <th>Dist Saved</th>
+                  <th>Reduction %</th>
+                  <th>Base Time</th>
+                  <th>Dual Time</th>
+                  <th>Result Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayList.map(r => (
+                  <tr
+                    key={r.orderId}
+                    onClick={() => setSelectedOrderId(r.orderId)}
+                    style={{ cursor: 'pointer', background: r.orderId === selectedOrderId ? 'rgba(56, 189, 248, 0.08)' : 'transparent' }}
+                  >
+                    <td><strong>{r.orderId}</strong></td>
+                    <td>{r.baselineDistance}</td>
+                    <td style={{ color: '#38bdf8' }}>{r.routeOnlyDistance || r.optimizedDistance}</td>
+                    <td style={{ color: '#c084fc' }}>{r.slotOnlyDistance || r.baselineDistance}</td>
+                    <td style={{ color: '#4ade80', fontWeight: 'bold' }}>{r.optimizedDistance}</td>
+                    <td style={{ color: r.distanceSaved > 0 ? '#4ade80' : r.distanceSaved < 0 ? '#f87171' : '#94a3b8', fontWeight: '600' }}>
+                      {r.distanceSaved > 0 ? `+${r.distanceSaved}` : r.distanceSaved}
+                    </td>
+                    <td>
+                      <span className={`badge ${r.pctDistanceReduction > 0 ? 'badge-improved' : r.pctDistanceReduction < 0 ? 'badge-worse' : ''}`}>
+                        {r.pctDistanceReduction}%
+                      </span>
+                    </td>
+                    <td>{r.baselineTimeSec}s</td>
+                    <td>{r.optimizedTimeSec}s</td>
+                    <td>
+                      <span className={`badge ${r.routeStatus === 'IMPROVED' ? 'badge-improved' : r.routeStatus === 'WORSE' ? 'badge-worse' : ''}`}>
+                        {r.routeStatus}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Interactive Custom Order Simulator */}
+          <div style={{ marginTop: '2rem', padding: '1.25rem', background: '#0f172a', borderRadius: '8px', border: '1px solid #38bdf8' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h3 style={{ color: '#38bdf8', fontSize: '1.1rem' }}>⚡ Ad-Hoc Order Routing Simulator (Add New Order)</h3>
+                <p style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Select custom products below and compute the optimal pick path dynamically!</p>
+              </div>
+              <button className="btn" onClick={runCustomSimulation} style={{ background: '#38bdf8', color: '#0f172a', fontWeight: 'bold' }}>
+                Run Dynamic Route Calculation
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem', maxHeight: '120px', overflowY: 'auto', padding: '0.5rem', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+              {(products || []).map(p => {
+                const selected = customSkus.includes(p.skuId);
+                return (
+                  <button
+                    key={p.skuId}
+                    className="btn"
+                    onClick={() => toggleCustomSku(p.skuId)}
+                    style={{
+                      padding: '0.25rem 0.6rem',
+                      fontSize: '0.75rem',
+                      background: selected ? 'rgba(56, 189, 248, 0.25)' : '#1e293b',
+                      color: selected ? '#38bdf8' : '#94a3b8',
+                      border: `1px solid ${selected ? '#38bdf8' : '#334155'}`
+                    }}
+                  >
+                    {selected ? '✓ ' : '+ '}{p.skuId} ({p.productName})
+                  </button>
+                );
+              })}
+            </div>
+
+            {simResult && (
+              <div style={{ background: 'rgba(56, 189, 248, 0.05)', padding: '1rem', borderRadius: '6px', border: '1px dashed #38bdf8' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <span style={{ fontWeight: 'bold', color: '#f8fafc' }}>Simulation Result ({simResult.stopsCount} Distinct Locations Visited):</span>
+                  <span className={`badge ${simResult.status === 'IMPROVED' ? 'badge-improved' : simResult.status === 'WORSE' ? 'badge-worse' : ''}`}>
+                    {simResult.status} ({simResult.pctReduction > 0 ? `-${simResult.pctReduction}%` : `+${Math.abs(simResult.pctReduction)}%`})
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#cbd5e1', lineHeight: '1.6' }}>
+                  <div><strong>Baseline Sequential:</strong> {simResult.baseDist} units ({simResult.baseTime}s) &rarr; <span style={{ color: '#94a3b8' }}>{simResult.baseSeq}</span></div>
+                  <div><strong>Nearest Neighbor:</strong> <span style={{ color: '#38bdf8', fontWeight: 'bold' }}>{simResult.nnDist} units</span> ({simResult.nnTime}s) &rarr; <span style={{ color: '#38bdf8' }}>{simResult.nnSeq}</span></div>
+                  <div style={{ marginTop: '0.3rem', color: simResult.distSaved >= 0 ? '#4ade80' : '#f87171', fontWeight: 'bold' }}>
+                    Travel Distance Saved: {simResult.distSaved > 0 ? `+${simResult.distSaved}` : simResult.distSaved} units | Pick Time Saved: {simResult.timeSaved > 0 ? `+${simResult.timeSaved}` : simResult.timeSaved}s
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // --- 7. REPLENISHMENT ALERTS COMPONENT ---
+    function ReplenishmentAlerts({ replenishment, products, locations, stockLevels, onAdjustStock }) {
+      const [selectedSku, setSelectedSku] = useState(products && products[0] ? products[0].skuId : 'SKU006');
+      const [deltaQty, setDeltaQty] = useState(10);
+
+      if (!replenishment) return <div className="state-container"><div className="spinner"></div>Loading replenishment alerts...</div>;
+
+      const outOfStock = replenishment.filter(r => r.stockStatus === 'OUT_OF_STOCK');
+      const lowStock = replenishment.filter(r => r.stockStatus === 'LOW_STOCK');
+
+      const handleAddStock = () => {
+        if (onAdjustStock) onAdjustStock(selectedSku, Math.abs(Number(deltaQty)));
+      };
+
+      const handleRemoveStock = () => {
+        if (onAdjustStock) onAdjustStock(selectedSku, -Math.abs(Number(deltaQty)));
+      };
+
+      const selProd = (products || []).find(p => p.skuId === selectedSku);
+      const selLocId = selProd ? selProd.currentLocation : null;
+      const selLoc = selLocId && locations ? locations.find(l => l.locationId === selLocId) : null;
+      const binCapacity = selLoc ? selLoc.capacity : (selProd && selProd.requiredCapacity ? selProd.requiredCapacity : 30);
+
+      const alertItem = replenishment.find(r => r.skuId === selectedSku);
+      const currentStock = (stockLevels && stockLevels[selectedSku] !== undefined)
+        ? stockLevels[selectedSku]
+        : (alertItem ? alertItem.currentStock : 15);
+      const minStock = alertItem ? alertItem.minimumStock : 10;
+      const remainingSpace = Math.max(0, binCapacity - currentStock);
+      const isFull = currentStock >= binCapacity;
+      const fillPct = Math.min(100, Math.round((currentStock / binCapacity) * 100));
+
+      return (
+        <div className="section-card">
+          <div className="section-header">
+            <div>
+              <h2 className="section-title">7. Replenishment Alerts & Stock Health</h2>
+              <p className="section-desc">SKUs where Current_Stock ≤ Minimum_Stock requiring immediate replenishment</p>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+              <span className="badge" style={{ backgroundColor: 'rgba(239,68,68,0.2)', color: '#f87171', border: '1px solid #ef4444', padding: '0.4rem 0.8rem' }}>
+                🔴 Out of Stock: {outOfStock.length}
+              </span>
+              <span className="badge" style={{ backgroundColor: 'rgba(245,158,11,0.2)', color: '#fbbf24', border: '1px solid #f59e0b', padding: '0.4rem 0.8rem' }}>
+                🟠 Low Stock: {lowStock.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="table-responsive">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>SKU ID</th>
+                  <th>Product Name</th>
+                  <th>Assigned Shelf</th>
+                  <th>Current Stock / Capacity</th>
+                  <th>Minimum Stock</th>
+                  <th>Deficit</th>
+                  <th>Stock Status</th>
+                  <th>Action Required</th>
+                </tr>
+              </thead>
+              <tbody>
+                {replenishment.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" style={{ textAlign: 'center', padding: '2rem', color: '#4ade80' }}>
+                      ✅ All inventory levels are healthy! No replenishment alerts active.
+                    </td>
+                  </tr>
+                ) : (
+                  replenishment.map(r => {
+                    const isOut = r.stockStatus === 'OUT_OF_STOCK';
+                    const deficit = r.minimumStock - r.currentStock;
+                    const prod = (products || []).find(p => p.skuId === r.skuId);
+                    const locId = prod ? prod.currentLocation : '—';
+                    const loc = locId ? (locations || []).find(l => l.locationId === locId) : null;
+                    const cap = loc ? loc.capacity : (prod && prod.requiredCapacity ? prod.requiredCapacity : 30);
+                    const isBinFull = r.currentStock >= cap;
+                    return (
+                      <tr key={r.skuId}>
+                        <td><strong>{r.skuId}</strong></td>
+                        <td>{r.productName}</td>
+                        <td><span className="badge badge-occupied">{locId}</span></td>
+                        <td>
+                          <span style={{ color: isOut ? '#f87171' : isBinFull ? '#f87171' : '#fbbf24', fontWeight: 'bold' }}>
+                            {r.currentStock}
+                          </span>
+                          <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}> / {cap} u</span>
+                        </td>
+                        <td>{r.minimumStock}</td>
+                        <td><span style={{ color: '#f87171', fontWeight: 'bold' }}>-{deficit}</span></td>
+                        <td>
+                          <span className="badge" style={{
+                            backgroundColor: isOut ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)',
+                            color: isOut ? '#f87171' : '#fbbf24',
+                            border: `1px solid ${isOut ? '#ef4444' : '#f59e0b'}`
+                          }}>
+                            {r.stockStatus}
+                          </span>
+                        </td>
+                        <td><span className="badge" style={{ backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171' }}>{r.replenishmentRequired}</span></td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Interactive Stock Count Adjustment Console */}
+          <div style={{ marginTop: '2rem', padding: '1.25rem', background: '#0f172a', borderRadius: '8px', border: '1px solid #334155' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.4rem' }}>
+              <h3 style={{ color: '#fbbf24', fontSize: '1.1rem', margin: 0 }}>📦 Stock Count & Restock Management Console</h3>
+              <span className="badge" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid #0284c7', fontSize: '0.75rem' }}>
+                Physical Shelf Limit: HARD CAP ENFORCED
+              </span>
+            </div>
+            <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem' }}>
+              Simulate stock movements. Restocks cannot exceed the physical capacity limit of the assigned shelf bin.
+            </p>
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.25rem' }}>Select SKU:</label>
+                <select
+                  value={selectedSku}
+                  onChange={e => setSelectedSku(e.target.value)}
+                  style={{ background: '#1e293b', border: '1px solid #334155', color: '#f8fafc', padding: '0.45rem 0.8rem', borderRadius: '6px', fontSize: '0.9rem' }}
+                >
+                  {(products || []).map(p => (
+                    <option key={p.skuId} value={p.skuId}>
+                      {p.skuId} - {p.productName} ({p.currentLocation || 'N/A'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.25rem' }}>Units:</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={deltaQty}
+                  onChange={e => setDeltaQty(Number(e.target.value))}
+                  style={{ width: '80px', background: '#1e293b', border: '1px solid #334155', color: '#f8fafc', padding: '0.45rem', borderRadius: '6px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', alignSelf: 'flex-end' }}>
+                <button
+                  className="btn btn-approve"
+                  onClick={handleAddStock}
+                  style={{ padding: '0.45rem 1rem' }}
+                  title={isFull ? 'Shelf is at full capacity' : `Restock +${deltaQty} units`}
+                >
+                  + Restock (+{deltaQty})
+                </button>
+                <button
+                  className="btn btn-reject"
+                  onClick={handleRemoveStock}
+                  style={{ padding: '0.45rem 1rem' }}
+                  title={`Pick / Dispatch -${deltaQty} units`}
+                >
+                  - Dispatch/Pick (-{deltaQty})
+                </button>
+              </div>
+            </div>
+
+            {/* Live Physical Shelf Capacity Indicator */}
+            <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#1e293b', borderRadius: '6px', border: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'center', flexWrap: 'wrap', fontSize: '0.85rem' }}>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Assigned Bin: </span>
+                  <span className="badge badge-occupied" style={{ marginLeft: '0.3rem' }}>{selLocId || 'Unassigned'}</span>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Physical Bin Capacity: </span>
+                  <strong style={{ color: '#f8fafc' }}>{binCapacity} units</strong>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Current Stock: </span>
+                  <strong style={{ color: isFull ? '#f87171' : currentStock <= minStock ? '#fbbf24' : '#4ade80' }}>
+                    {currentStock} / {binCapacity} units
+                  </strong>
+                  <span style={{ color: '#94a3b8', marginLeft: '0.3rem' }}>({fillPct}% fill)</span>
+                </div>
+              </div>
+              <div>
+                {isFull ? (
+                  <span className="badge" style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', border: '1px solid #ef4444', padding: '0.35rem 0.7rem' }}>
+                    🚫 Shelf Full (0 space available)
+                  </span>
+                ) : (
+                  <span className="badge" style={{ backgroundColor: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', border: '1px solid #22c55e', padding: '0.35rem 0.7rem' }}>
+                    🟢 Available Space: {remainingSpace} units
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 8. SUPERVISOR APPROVAL COMPONENT ---
+    function SupervisorApproval({ recommendations, onApprove, onReject, onReEvaluate, isReEvaluating, onResetDemo, isResetting, toast }) {
+      const [actionInProgress, setActionInProgress] = useState(null);
+
+      if (!recommendations) return <div className="state-container"><div className="spinner"></div>Loading approvals...</div>;
+
+      const pending = recommendations.filter(r => r.recommendationStatus === 'RECOMMENDED' && r.recommendedLocation && r.recommendedLocation !== 'NONE');
+      const approved = recommendations.filter(r => r.recommendationStatus === 'APPROVED');
+      const rejected = recommendations.filter(r => r.recommendationStatus === 'REJECTED');
+      const noFeasible = recommendations.filter(r => r.recommendationStatus === 'NO_FEASIBLE_LOCATION' || !r.recommendedLocation || r.recommendedLocation === 'NONE');
+
+      const handleApproveAction = async (id) => {
+        setActionInProgress(id);
+        try {
+          await onApprove(id);
+        } finally {
+          setActionInProgress(null);
+        }
+      };
+
+      const handleRejectAction = async (id) => {
+        setActionInProgress(id);
+        try {
+          await onReject(id);
+        } finally {
+          setActionInProgress(null);
+        }
+      };
+
+      return (
+        <div>
+          {toast && (
+            <div className={`toast-alert ${toast.type === 'success' ? 'toast-success' : 'toast-error'}`}>
+              <span>{toast.message}</span>
+            </div>
+          )}
+
+          {/* Supervisor Status KPI Cards */}
+          <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '1.5rem' }}>
+            <div className="kpi-card" style={{ borderColor: 'rgba(56, 189, 248, 0.4)' }}>
+              <span className="kpi-label">Pending Action</span>
+              <span className="kpi-value" style={{ color: '#38bdf8' }}>{pending.length}</span>
+              <span className="kpi-subtext">Awaiting supervisor decision</span>
+            </div>
+            <div className="kpi-card" style={{ borderColor: 'rgba(34, 197, 94, 0.4)' }}>
+              <span className="kpi-label">Approved Relocations</span>
+              <span className="kpi-value" style={{ color: '#4ade80' }}>{approved.length}</span>
+              <span className="kpi-subtext">Slot updates confirmed in warehouse</span>
+            </div>
+            <div className="kpi-card" style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}>
+              <span className="kpi-label">Rejected Proposals</span>
+              <span className="kpi-value" style={{ color: '#f87171' }}>{rejected.length}</span>
+              <span className="kpi-subtext">Kept at original bin location</span>
+            </div>
+            <div className="kpi-card" style={{ borderColor: 'rgba(245, 158, 11, 0.4)' }}>
+              <span className="kpi-label">Constrained SKUs</span>
+              <span className="kpi-value" style={{ color: '#fbbf24' }}>{noFeasible.length}</span>
+              <span className="kpi-subtext">No eligible empty bin available</span>
+            </div>
+          </div>
+
+          {/* Pending Approval Queue Card */}
+          <div className="section-card">
+            <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <h2 className="section-title">8. Supervisor Approval Queue</h2>
+                <p className="section-desc">
+                  Review and authorize candidate slot relocations proposed by the optimization engine. Approvals update the warehouse layout transactionally.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={onReEvaluate}
+                  disabled={isReEvaluating}
+                  style={{
+                    backgroundColor: '#0284c7',
+                    color: '#fff',
+                    padding: '0.5rem 1rem',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    border: 'none',
+                    cursor: isReEvaluating ? 'not-allowed' : 'pointer'
+                  }}
+                  title="Scan warehouse for available empty or vacated slots and match against eligible candidate SKUs"
+                >
+                  {isReEvaluating ? '⏳ Scanning Empty Slots...' : '⚡ Re-evaluate Empty Slots'}
+                </button>
+                {onResetDemo && (
+                  <button
+                    className="btn"
+                    onClick={onResetDemo}
+                    disabled={isResetting}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.45rem',
+                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                      color: '#f87171',
+                      border: '1px solid #ef4444',
+                      padding: '0.5rem 0.95rem',
+                      borderRadius: '6px',
+                      fontWeight: '600',
+                      fontSize: '0.85rem',
+                      cursor: isResetting ? 'wait' : 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                    title="Reset warehouse database and slot allocations back to initial baseline"
+                  >
+                    <span>{isResetting ? '⏳ Resetting...' : '↺ Reset to Baseline'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {pending.length === 0 ? (
+              <div className="state-container" style={{ padding: '3rem 2rem', textAlign: 'center' }}>
+                <p style={{ color: '#4ade80', fontSize: '1.2rem', fontWeight: '600' }}>✅ All Active Slotting Recommendations Have Been Resolved</p>
+                <p style={{ color: '#94a3b8', marginTop: '0.5rem' }}>There are currently no pending proposals awaiting review. Click below to scan warehouse bins for unslotted SKUs or reset back to baseline.</p>
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.2rem', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={onReEvaluate}
+                    disabled={isReEvaluating}
+                    style={{
+                      backgroundColor: '#0284c7',
+                      color: '#fff',
+                      padding: '0.6rem 1.2rem',
+                      borderRadius: '6px',
+                      fontWeight: 600,
+                      border: 'none',
+                      cursor: isReEvaluating ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {isReEvaluating ? '⏳ Scanning Empty Slots...' : '⚡ Re-evaluate Empty Slots'}
+                  </button>
+                  {onResetDemo && (
+                    <button
+                      className="btn"
+                      onClick={onResetDemo}
+                      disabled={isResetting}
+                      style={{
+                        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                        color: '#f87171',
+                        border: '1px solid #ef4444',
+                        padding: '0.6rem 1.2rem',
+                        borderRadius: '6px',
+                        fontWeight: 600,
+                        cursor: isResetting ? 'wait' : 'pointer'
+                      }}
+                    >
+                      {isResetting ? '⏳ Resetting...' : '↺ Reset to Baseline'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Rec ID</th>
+                      <th>SKU</th>
+                      <th>Product Name</th>
+                      <th>Demand Class</th>
+                      <th>Current Bin</th>
+                      <th>Proposed Bin</th>
+                      <th>Dist to Depot</th>
+                      <th>Distance Saved</th>
+                      <th>Optimization Rationale</th>
+                      <th>Supervisor Decision</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pending.map(r => (
+                      <tr key={r.recommendationId}>
+                        <td><strong>{r.recommendationId}</strong></td>
+                        <td>{r.skuId}</td>
+                        <td><strong>{r.productName}</strong></td>
+                        <td><span className={`badge badge-${r.demandClass.toLowerCase()}`}>{r.demandClass}</span></td>
+                        <td><span className="badge badge-occupied">{r.currentLocation}</span></td>
+                        <td>
+                          <div>
+                            <span className="badge badge-empty">{r.recommendedLocation}</span>
+                            {r.reason && r.reason.includes('Co-ordered with') && (
+                              <div style={{ marginTop: '0.25rem' }}>
+                                <span className="badge" style={{ backgroundColor: 'rgba(168,85,247,0.2)', color: '#c084fc', border: '1px solid #a855f7', fontSize: '0.65rem' }}>
+                                  Affinity Clustered
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td>{r.distance} units</td>
+                        <td>
+                          {r.distanceSaved && r.distanceSaved > 0 ? (
+                            <strong style={{ color: '#4ade80' }}>+{r.distanceSaved} u</strong>
+                          ) : (
+                            <span style={{ color: '#94a3b8' }}>0 u</span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: '0.8rem', color: '#cbd5e1', maxWidth: '300px' }}>{r.reason}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button
+                              className="btn btn-approve"
+                              disabled={actionInProgress === r.recommendationId || !r.recommendedLocation || r.recommendedLocation === 'NONE'}
+                              onClick={() => handleApproveAction(r.recommendationId)}
+                              title={(!r.recommendedLocation || r.recommendedLocation === 'NONE') ? 'Cannot approve: No feasible target bin assigned' : 'Approve slot relocation'}
+                              style={{
+                                padding: '0.4rem 0.8rem',
+                                fontSize: '0.8rem',
+                                minWidth: '75px',
+                                opacity: (!r.recommendedLocation || r.recommendedLocation === 'NONE') ? 0.4 : 1,
+                                cursor: (!r.recommendedLocation || r.recommendedLocation === 'NONE') ? 'not-allowed' : 'pointer'
+                              }}
+                            >
+                              {actionInProgress === r.recommendationId ? '...' : '✓ Approve'}
+                            </button>
+                            <button
+                              className="btn btn-reject"
+                              disabled={actionInProgress === r.recommendationId}
+                              onClick={() => handleRejectAction(r.recommendationId)}
+                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', minWidth: '70px' }}
+                            >
+                              {actionInProgress === r.recommendationId ? '...' : '✗ Reject'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Decision History (Audit Trail) */}
+          {(approved.length > 0 || rejected.length > 0) && (
+            <div className="section-card" style={{ marginTop: '1.5rem' }}>
+              <div className="section-header">
+                <div>
+                  <h2 className="section-title">📋 Decision History & Supervisor Audit Trail</h2>
+                  <p className="section-desc">Historical log of all approved and rejected slot change decisions.</p>
+                </div>
+              </div>
+
+              <div className="table-responsive" style={{ maxHeight: '350px' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Rec ID</th>
+                      <th>SKU</th>
+                      <th>Product</th>
+                      <th>Current / Original Bin</th>
+                      <th>Assigned Bin</th>
+                      <th>Decision</th>
+                      <th>Audit Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...approved, ...rejected].map(r => (
+                      <tr key={r.recommendationId}>
+                        <td><strong>{r.recommendationId}</strong></td>
+                        <td>{r.skuId}</td>
+                        <td>{r.productName}</td>
+                        <td><span className="badge badge-occupied">{r.currentLocation}</span></td>
+                        <td>
+                          {r.recommendationStatus === 'APPROVED' ? (
+                            <span className="badge badge-empty">{r.recommendedLocation}</span>
+                          ) : (
+                            <span className="badge badge-occupied">{r.currentLocation} (Retained)</span>
+                          )}
+                        </td>
+                        <td>
+                          <span
+                            className="badge"
+                            style={{
+                              backgroundColor: r.recommendationStatus === 'APPROVED'
+                                ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                              color: r.recommendationStatus === 'APPROVED' ? '#4ade80' : '#f87171',
+                              border: `1px solid ${r.recommendationStatus === 'APPROVED' ? '#22c55e' : '#ef4444'}`
+                            }}
+                          >
+                            {r.recommendationStatus}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.8rem', color: '#94a3b8' }}>{r.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const INITIAL_STOCK = {
+      SKU001: 19, SKU002: 8,  SKU003: 33, SKU004: 21, SKU005: 30,
+      SKU006: 0,  SKU007: 35, SKU008: 24, SKU009: 34, SKU010: 9,
+      SKU011: 4,  SKU012: 28, SKU013: 38, SKU014: 24, SKU015: 5,
+      SKU016: 22, SKU017: 26, SKU018: 27, SKU019: 28, SKU020: 10,
+      SKU021: 34, SKU022: 32, SKU023: 1,  SKU024: 26, SKU025: 13,
+      SKU026: 33, SKU027: 16, SKU028: 5,  SKU029: 36, SKU030: 39
+    };
+
+    const INITIAL_MIN_STOCK = {
+      SKU001: 13, SKU002: 8,  SKU003: 15, SKU004: 9,  SKU005: 11,
+      SKU006: 8,  SKU007: 6,  SKU008: 9,  SKU009: 10, SKU010: 5,
+      SKU011: 8,  SKU012: 12, SKU013: 9,  SKU014: 6,  SKU015: 10,
+      SKU016: 13, SKU017: 15, SKU018: 10, SKU019: 14, SKU020: 8,
+      SKU021: 9,  SKU022: 5,  SKU023: 10, SKU024: 8,  SKU025: 8,
+      SKU026: 12, SKU027: 6,  SKU028: 7,  SKU029: 13, SKU030: 15
+    };
+
+    // --- MAIN APP COMPONENT ---
+    function App() {
+      const [activeTab, setActiveTab] = useState('overview');
+      const [loading, setLoading] = useState(true);
+      const [backendOnline, setBackendOnline] = useState(false);
+      const [toast, setToast] = useState(null);
+
+      const [products, setProducts] = useState([]);
+      const [locations, setLocations] = useState([]);
+      const [demand, setDemand] = useState([]);
+      const [recommendations, setRecommendations] = useState([]);
+      const [routes, setRoutes] = useState([]);
+      const [replenishment, setReplenishment] = useState([]);
+      const [analytics, setAnalytics] = useState(null);
+      const [affinityPairs, setAffinityPairs] = useState([]);
+      const [isResetting, setIsResetting] = useState(false);
+      const [stockLevels, setStockLevels] = useState({});
+
+      const showToast = (message, type = 'success') => {
+        setToast({ message, type });
+        setTimeout(() => setToast(null), 4000);
+      };
+
+      const loadFallback = () => {
+        if (window.__SEED_DATA__) {
+          const s = JSON.parse(JSON.stringify(window.__SEED_DATA__));
+          setProducts(s.products || []);
+          setLocations(s.locations || []);
+          setDemand(s.demand || []);
+          setRecommendations(s.recommendations || []);
+          setRoutes(s.routes || []);
+          setReplenishment(s.replenishment || []);
+          setAnalytics(s.analytics || null);
+          setAffinityPairs(s.affinityPairs || []);
+        }
+      };
+
+      const loadData = useCallback(async () => {
+        setLoading(true);
+        try {
+          const [p, l, d, rec, rt, rep, a, aff] = await Promise.all([
+            warehouseApi.getProducts().catch(() => null),
+            warehouseApi.getLocations().catch(() => null),
+            warehouseApi.getDemand().catch(() => null),
+            warehouseApi.getSlotRecommendations().catch(() => null),
+            warehouseApi.getAllRoutes().catch(() => null),
+            warehouseApi.getReplenishmentAlerts().catch(() => null),
+            warehouseApi.getAnalytics().catch(() => null),
+            warehouseApi.getAffinity().catch(() => null),
+          ]);
+
+          if (p && l && a) {
+            setProducts(p);
+            setLocations(l);
+            setDemand(d || []);
+            setRecommendations(rec || []);
+            setRoutes(rt || []);
+            setReplenishment(rep || []);
+            setAnalytics(a);
+            setAffinityPairs(aff || (window.__SEED_DATA__ && window.__SEED_DATA__.affinityPairs) || []);
+            setBackendOnline(true);
+          } else {
+            loadFallback();
+            setBackendOnline(false);
+          }
+        } catch (err) {
+          loadFallback();
+          setBackendOnline(false);
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        loadData();
+      }, [loadData]);
+
+      const handleApprove = async (id) => {
+        try {
+          if (backendOnline) {
+            const resp = await warehouseApi.approveSlot(id);
+            showToast(resp.message || `Slot ${id} approved successfully`, 'success');
+            const [updatedRecs, updatedAnalytics, updatedProds, updatedLocs] = await Promise.all([
+              warehouseApi.getSlotRecommendations(),
+              warehouseApi.getAnalytics(),
+              warehouseApi.getProducts().catch(() => null),
+              warehouseApi.getLocations().catch(() => null)
+            ]);
+            setRecommendations(updatedRecs);
+            setAnalytics(updatedAnalytics);
+            if (updatedProds) setProducts(updatedProds);
+            if (updatedLocs) setLocations(updatedLocs);
+          } else {
+            const rec = recommendations.find(r => r.recommendationId === id);
+            setRecommendations(prev => prev.map(r => r.recommendationId === id ? { ...r, recommendationStatus: 'APPROVED' } : r));
+            if (rec && rec.recommendedLocation !== 'NONE') {
+              setProducts(prev => prev.map(p => p.skuId === rec.skuId ? { ...p, currentLocation: rec.recommendedLocation } : p));
+              setLocations(prev => prev.map(l => {
+                if (l.locationId === rec.recommendedLocation) return { ...l, status: 'OCCUPIED' };
+                if (l.locationId === rec.currentLocation) return { ...l, status: 'EMPTY' };
+                return l;
+              }));
+            }
+            showToast(`Slot recommendation ${id} approved (preview update)`, 'success');
+          }
+        } catch (e) {
+          showToast(e.message || 'Approval failed', 'error');
+        }
+      };
+
+      const handleReject = async (id) => {
+        try {
+          if (backendOnline) {
+            const resp = await warehouseApi.rejectSlot(id);
+            showToast(resp.message || `Slot ${id} rejected`, 'success');
+            const [updatedRecs, updatedAnalytics, updatedProds, updatedLocs] = await Promise.all([
+              warehouseApi.getSlotRecommendations(),
+              warehouseApi.getAnalytics(),
+              warehouseApi.getProducts().catch(() => null),
+              warehouseApi.getLocations().catch(() => null)
+            ]);
+            setRecommendations(updatedRecs);
+            setAnalytics(updatedAnalytics);
+            if (updatedProds) setProducts(updatedProds);
+            if (updatedLocs) setLocations(updatedLocs);
+          } else {
+            setRecommendations(prev => {
+              const rejectedRec = prev.find(r => r.recommendationId === id);
+              const updated = prev.map(r => r.recommendationId === id ? { ...r, recommendationStatus: 'REJECTED' } : r);
+              if (rejectedRec && rejectedRec.recommendedLocation && rejectedRec.recommendedLocation !== 'NONE') {
+                const targetLoc = rejectedRec.recommendedLocation;
+                const busySkus = new Set(updated.filter(r => r.recommendationStatus === 'RECOMMENDED' || r.recommendationStatus === 'APPROVED' || r.recommendationStatus === 'REJECTED').map(r => r.skuId));
+                busySkus.add(rejectedRec.skuId);
+                const candidate = updated.find(r => r.recommendationStatus === 'NO_FEASIBLE_LOCATION' && !busySkus.has(r.skuId));
+                if (candidate) {
+                  return updated.map(r => r.recommendationId === candidate.recommendationId ? {
+                    ...r,
+                    recommendedLocation: targetLoc,
+                    recommendationStatus: 'RECOMMENDED',
+                    distanceSaved: Math.max(5, (candidate.distance || 40) - 10),
+                    reason: `Dynamic Re-Slotting: Allocated to available empty slot ${targetLoc}. Relocation reduces travel distance.`
+                  } : r);
+                }
+              }
+              return updated;
+            });
+            showToast(`Slot recommendation ${id} rejected (preview update)`, 'success');
+          }
+        } catch (e) {
+          showToast(e.message || 'Rejection failed', 'error');
+        }
+      };
+
+      const [isReEvaluating, setIsReEvaluating] = useState(false);
+
+      const handleReEvaluate = async () => {
+        setIsReEvaluating(true);
+        try {
+          if (backendOnline) {
+            const updatedRecs = await warehouseApi.reEvaluateSlots();
+            const [updatedAnalytics, updatedProds, updatedLocs] = await Promise.all([
+              warehouseApi.getAnalytics(),
+              warehouseApi.getProducts().catch(() => null),
+              warehouseApi.getLocations().catch(() => null)
+            ]);
+            setRecommendations(updatedRecs);
+            setAnalytics(updatedAnalytics);
+            if (updatedProds) setProducts(updatedProds);
+            if (updatedLocs) setLocations(updatedLocs);
+            showToast('⚡ Dynamic Re-evaluation complete: Empty slots scanned and matched with candidate SKUs.', 'success');
+          } else {
+            showToast('⚡ Evaluated empty warehouse slots (standalone mode).', 'success');
+          }
+        } catch (e) {
+          showToast(e.message || 'Re-evaluation failed', 'error');
+        } finally {
+          setIsReEvaluating(false);
+        }
+      };
+
+      const handleResetDemo = async () => {
+        if (!window.confirm('Reset warehouse demo state back to baseline? All approved slot changes and custom modifications will be reverted.')) {
+          return;
+        }
+        setIsResetting(true);
+        try {
+          setStockLevels({});
+          if (backendOnline) {
+            const resp = await warehouseApi.resetDemoState();
+            showToast(resp.message || 'Warehouse reset to baseline seed state.', 'success');
+            await loadData();
+          } else {
+            loadFallback();
+            showToast('Warehouse reset to baseline seed state (standalone mode).', 'success');
+          }
+        } catch (err) {
+          showToast(err.message || 'Failed to reset demo state', 'error');
+        } finally {
+          setIsResetting(false);
+        }
+      };
+
+      const handleVacateLocation = async (locationId) => {
+        try {
+          if (backendOnline) {
+            const resp = await warehouseApi.vacateLocation(locationId);
+            showToast(resp.message || `Location ${locationId} vacated to EMPTY in database.`, 'success');
+            const [updatedLocs, updatedProds, updatedRecs, updatedAnalytics] = await Promise.all([
+              warehouseApi.getLocations(),
+              warehouseApi.getProducts().catch(() => null),
+              warehouseApi.getSlotRecommendations().catch(() => null),
+              warehouseApi.getAnalytics().catch(() => null)
+            ]);
+            if (updatedLocs) setLocations(updatedLocs);
+            if (updatedProds) setProducts(updatedProds);
+            if (updatedRecs) setRecommendations(updatedRecs);
+            if (updatedAnalytics) setAnalytics(updatedAnalytics);
+          } else {
+            setLocations(prev => prev.map(l => l.locationId === locationId ? { ...l, status: 'EMPTY' } : l));
+            setProducts(prev => prev.map(p => p.currentLocation === locationId ? { ...p, currentLocation: 'UNASSIGNED' } : p));
+            setAnalytics(prev => prev ? {
+              ...prev,
+              occupiedLocations: Math.max(0, prev.occupiedLocations - 1),
+              emptyLocations: prev.emptyLocations + 1
+            } : prev);
+            showToast(`Location ${locationId} vacated to EMPTY (standalone mode).`, 'success');
+          }
+        } catch (err) {
+          showToast(err.message || 'Failed to vacate location', 'error');
+        }
+      };
+
+      const updateReplenishmentList = (skuId, prodName, newStock, minStock) => {
+        setReplenishment(prev => {
+          const status = newStock === 0 ? 'OUT_OF_STOCK' : (newStock <= minStock ? 'LOW_STOCK' : 'HEALTHY');
+          const isAlert = newStock <= minStock;
+          const existing = prev.find(r => r.skuId === skuId);
+
+          if (isAlert) {
+            const newItem = {
+              skuId,
+              productName: prodName,
+              currentStock: newStock,
+              minimumStock: minStock,
+              stockStatus: status,
+              replenishmentRequired: 'YES'
+            };
+            if (existing) {
+              return prev.map(r => r.skuId === skuId ? newItem : r);
+            } else {
+              return [...prev, newItem];
+            }
+          } else {
+            return prev.filter(r => r.skuId !== skuId);
+          }
+        });
+      };
+
+      const handleAdjustStock = (skuId, delta) => {
+        const prod = (products || []).find(p => p.skuId === skuId);
+        const prodName = prod ? prod.productName : skuId;
+        const locId = prod ? prod.currentLocation : null;
+        const loc = locId && locations ? locations.find(l => l.locationId === locId) : null;
+        const maxCapacity = loc ? loc.capacity : (prod && prod.requiredCapacity ? prod.requiredCapacity : 30);
+
+        const alertItem = (replenishment || []).find(r => r.skuId === skuId);
+        const currentStock = stockLevels[skuId] !== undefined
+          ? stockLevels[skuId]
+          : (alertItem ? alertItem.currentStock : (INITIAL_STOCK[skuId] ?? 15));
+        const minStock = alertItem ? alertItem.minimumStock : (INITIAL_MIN_STOCK[skuId] ?? 10);
+
+        if (delta > 0) {
+          // Restock: Check shelf capacity constraint
+          if (currentStock >= maxCapacity) {
+            showToast(
+              `⚠️ Shelf Capacity Limit Reached: ${skuId} (${prodName}) in shelf ${locId || 'N/A'} is already at 100% capacity (${currentStock}/${maxCapacity} units). Restock blocked.`,
+              'error'
+            );
+            return;
+          }
+
+          if (currentStock + delta > maxCapacity) {
+            const allowableAdd = maxCapacity - currentStock;
+            const rejectedQty = delta - allowableAdd;
+            const newStock = maxCapacity; // Enforce hard cap
+
+            setStockLevels(prev => ({ ...prev, [skuId]: newStock }));
+            updateReplenishmentList(skuId, prodName, newStock, minStock);
+
+            showToast(
+              `⚠️ Shelf Capacity Hard Cap: Shelf ${locId || ''} capacity limit is ${maxCapacity} units (Current: ${currentStock}). Added +${allowableAdd} units to fill shelf. ${rejectedQty} units rejected due to physical capacity constraint.`,
+              'error'
+            );
+            return;
+          }
+
+          const newStock = currentStock + delta;
+          setStockLevels(prev => ({ ...prev, [skuId]: newStock }));
+          updateReplenishmentList(skuId, prodName, newStock, minStock);
+
+          const status = newStock <= minStock ? 'LOW_STOCK' : 'HEALTHY';
+          showToast(
+            `Restocked (+) ${delta} units of ${skuId} into shelf ${locId || 'N/A'}. Current stock: ${newStock}/${maxCapacity} units (${status}).`,
+            'success'
+          );
+        } else {
+          // Pick / Dispatch: delta < 0
+          const pickQty = Math.abs(delta);
+          if (currentStock === 0) {
+            showToast(`⚠️ Cannot dispatch ${skuId}: Shelf ${locId || 'N/A'} is completely out of stock (0 units).`, 'error');
+            return;
+          }
+
+          const actualPicked = Math.min(pickQty, currentStock);
+          const newStock = Math.max(0, currentStock - pickQty);
+          setStockLevels(prev => ({ ...prev, [skuId]: newStock }));
+          updateReplenishmentList(skuId, prodName, newStock, minStock);
+
+          const status = newStock === 0 ? 'OUT_OF_STOCK' : (newStock <= minStock ? 'LOW_STOCK' : 'HEALTHY');
+          showToast(
+            `Dispatched (-) ${actualPicked} units of ${skuId} from shelf ${locId || 'N/A'}. Current stock: ${newStock}/${maxCapacity} units (${status}).`,
+            newStock <= minStock ? 'error' : 'success'
+          );
+        }
+      };
+
+      const counts = {
+        products: products.length,
+        locations: locations.length,
+        demand: demand.length,
+        recommendations: recommendations.length,
+        routes: routes.length,
+        replenishment: replenishment.length,
+        pendingApproval: recommendations.filter(r => r.recommendationStatus === 'RECOMMENDED').length
+      };
+
+      return (
+        <div className="dashboard-container">
+          <Header />
+          <Navbar activeTab={activeTab} setActiveTab={setActiveTab} counts={counts} />
+          <main className="main-content">
+            {loading ? (
+              <div className="state-container">
+                <div className="spinner"></div>
+                <p>Loading CAP-12 Warehouse Management System...</p>
+              </div>
+            ) : (
+              <>
+                {activeTab === 'overview' && (
+                  <WarehouseOverview
+                    analytics={analytics}
+                    routes={routes}
+                    recommendations={recommendations}
+                    replenishment={replenishment}
+                  />
+                )}
+                {activeTab === 'products' && <ProductMaster products={products} />}
+                {activeTab === 'locations' && (
+                  <WarehouseLocations
+                    locations={locations}
+                    products={products}
+                    demand={demand}
+                    onVacateLocation={handleVacateLocation}
+                  />
+                )}
+                {activeTab === 'demand' && <DemandClassification demand={demand} affinityPairs={affinityPairs} />}
+                {activeTab === 'recommendations' && (
+                  <SlotRecommendations
+                    recommendations={recommendations}
+                    onResetDemo={handleResetDemo}
+                    isResetting={isResetting}
+                  />
+                )}
+                {activeTab === 'pickpath' && <PickPathOptimization routes={routes} products={products} locations={locations} />}
+                {activeTab === 'replenishment' && (
+                  <ReplenishmentAlerts
+                    replenishment={replenishment}
+                    products={products}
+                    locations={locations}
+                    stockLevels={stockLevels}
+                    onAdjustStock={handleAdjustStock}
+                  />
+                )}
+                {activeTab === 'approval' && (
+                  <SupervisorApproval
+                    recommendations={recommendations}
+                    onApprove={handleApprove}
+                    onReject={handleReject}
+                    onReEvaluate={handleReEvaluate}
+                    isReEvaluating={isReEvaluating}
+                    onResetDemo={handleResetDemo}
+                    isResetting={isResetting}
+                    toast={toast}
+                  />
+                )}
+              </>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    const rootElement = document.getElementById('root');
+    ReactDOM.createRoot(rootElement).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+SKU_ID,Product_Name,Current_Stock,Minimum_Stock,Stock_Status,Replenishment_Required
+SKU002,Tablet,8,8,LOW_STOCK,YES
+SKU006,USB Hub,0,8,OUT_OF_STOCK,YES
+SKU011,Power Bank,4,8,LOW_STOCK,YES
+SKU015,Headphones,5,10,LOW_STOCK,YES
+SKU023,Router,1,10,LOW_STOCK,YES
+SKU028,Graphics Tablet,5,7,LOW_STOCK,YES

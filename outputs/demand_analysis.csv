@@ -1,0 +1,31 @@
+SKU_ID,Product_Name,Category,Hazard_Class,Current_Location,Order_Frequency,Total_Quantity,Demand_CV,Volatility_Class,Demand_Class
+SKU007,Wireless Mouse,Accessories,GENERAL,A02,9,23,2.28,VOLATILE,Medium
+SKU008,Keyboard,Accessories,GENERAL,B02,7,22,1.89,VOLATILE,Medium
+SKU004,Monitor,Electronics,GENERAL,A04,7,21,1.67,VOLATILE,Medium
+SKU006,USB Hub,Accessories,GENERAL,A06,6,16,2.25,VOLATILE,Medium
+SKU010,Mouse Pad,Accessories,GENERAL,B02,5,19,2.16,VOLATILE,Medium
+SKU003,Smartphone,Electronics,GENERAL,A03,5,11,2.28,VOLATILE,Medium
+SKU009,Laptop Stand,Accessories,GENERAL,B01,5,8,2.66,VOLATILE,Medium
+SKU001,Laptop,Computing,GENERAL,A01,4,15,2.59,VOLATILE,Medium
+SKU002,Tablet,Computing,GENERAL,A02,4,12,2.7,VOLATILE,Medium
+SKU015,Headphones,Audio,GENERAL,A06,4,9,2.52,VOLATILE,Medium
+SKU005,Webcam,Electronics,GENERAL,A05,3,7,3.01,VOLATILE,Slow
+SKU013,Rechargeable Battery,Battery,HAZMAT_BATTERY,B05,2,7,3.5,VOLATILE,Slow
+SKU016,Earbuds,Audio,GENERAL,C04,2,7,3.79,VOLATILE,Slow
+SKU017,Microphone,Audio,GENERAL,C01,2,7,3.5,VOLATILE,Slow
+SKU023,Router,Electronics,GENERAL,B06,2,6,3.66,VOLATILE,Slow
+SKU024,Wi-Fi Adapter,Electronics,GENERAL,A08,2,6,3.66,VOLATILE,Slow
+SKU019,USB-C Cable,Accessories,GENERAL,C03,2,5,4.08,VOLATILE,Slow
+SKU021,External SSD,Computing,GENERAL,C05,2,5,4.08,VOLATILE,Slow
+SKU014,Bluetooth Speaker,Audio,GENERAL,A07,2,4,3.9,VOLATILE,Slow
+SKU030,Portable SSD,Computing,GENERAL,B08,2,4,3.46,VOLATILE,Slow
+SKU018,HDMI Cable,Accessories,GENERAL,C02,1,5,5.0,VOLATILE,Slow
+SKU020,Ethernet Cable,Accessories,GENERAL,C04,1,4,5.0,VOLATILE,Slow
+SKU022,Flash Drive,Computing,GENERAL,B06,1,3,5.0,VOLATILE,Slow
+SKU027,Smartwatch,Electronics,GENERAL,D03,1,3,5.0,VOLATILE,Slow
+SKU028,Graphics Tablet,Computing,GENERAL,D04,1,3,5.0,VOLATILE,Slow
+SKU029,Docking Station,Computing,GENERAL,B07,1,3,5.0,VOLATILE,Slow
+SKU012,AA Battery Pack,Battery,HAZMAT_BATTERY,B04,1,1,5.0,VOLATILE,Slow
+SKU011,Power Bank,Battery,HAZMAT_BATTERY,B03,0,0,0.0,STABLE,Slow
+SKU025,Laptop Charger,Electronics,HAZMAT_FLAMMABLE,D01,0,0,0.0,STABLE,Slow
+SKU026,Phone Charger,Electronics,GENERAL,D02,0,0,0.0,STABLE,Slow
