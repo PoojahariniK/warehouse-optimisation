@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: python/Dockerfile
-    image: smart-warehouse-python:local
+    image: ghcr.io/poojaharinik/smart-warehouse-python:latest
     container_name: wh-py
     environment:
       - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT:-}
@@ -17,6 +17,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: ghcr.io/poojaharinik/smart-warehouse-backend:latest
     container_name: cap12-warehouse-backend
     ports:
       - "8080:8080"
@@ -44,6 +45,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: ghcr.io/poojaharinik/smart-warehouse-frontend:latest
     container_name: cap12-warehouse-frontend
     ports:
       - "3000:3000"

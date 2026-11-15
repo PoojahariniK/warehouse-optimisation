@@ -265,4 +265,4 @@ jobs:
 
       - name: Deploy with Docker Compose on EC2
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ env.SSH_USER }}@${{ secrets.EC2_HOST }} "echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u ${{ github.actor }} --password-stdin 2>/dev/null || true && cd ~/smart-warehouse-optimizer && (docker compose pull || true) && docker compose up -d --build --remove-orphans && docker image prune -f"
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ env.SSH_USER }}@${{ secrets.EC2_HOST }} "echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u ${{ github.actor }} --password-stdin && cd ~/smart-warehouse-optimizer && docker compose pull && docker compose up -d --remove-orphans && docker image prune -f"
